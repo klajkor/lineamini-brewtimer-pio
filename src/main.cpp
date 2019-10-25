@@ -27,8 +27,8 @@
 #define LED_HOR_OFFSET 1
 #define LED_DIGIT_OFFSET 4
 
-#define SW_ON_LEVEL LOW
-#define SW_OFF_LEVEL HIGH
+#define SW_ON_LEVEL LOW  /* Switch on level */
+#define SW_OFF_LEVEL HIGH  /* Switch off level */
 
 //Top Level Variables:
 int DEBUG = 1;  //Set to 1 to enable serial monitor debugging info
@@ -89,6 +89,7 @@ byte bright_intensity = 8;
 byte dimm_intensity = 1;
 
 /* Function declarations */
+
 void StateMachine_counter1();
 void StateMachine_display1();
 void StateMachine_sw1();
@@ -102,10 +103,12 @@ void puttinydigit3x5l(int address, byte x, byte y, char c);
 
 /* Functions */
 
+/**
+* @brief Counter 1 state machine - counts the seconds
+*/
 void StateMachine_counter1() {
 
   prev_state_counter1 = state_counter1;
-
 
   //State Machine Section
   switch (state_counter1) {
@@ -134,7 +137,7 @@ void StateMachine_counter1() {
       icounter1 = int ((elapsed_counter1 / 1000) % 60);
       if (icounter1 != prev_icounter1) {
         if (DEBUG) {
-          Serial.print("icounter1: ");
+          Serial.print(F("icounter1: "));
           Serial.println(icounter1, DEC);
         }
         bright_display1(icounter1);
@@ -152,7 +155,7 @@ void StateMachine_counter1() {
   else
   {
     if (DEBUG) {
-      Serial.print("state_counter1: ");
+      Serial.print(F("state_counter1: "));
       Serial.println(state_counter1, DEC);
     }
 
@@ -180,6 +183,9 @@ void StateMachine_display1() {
   }
 }
 
+/**
+* @brief Clears the dot matrix display(s)
+*/ 
 void clear_display1() {
   for (byte address = 0; address < 2; address++) {
     lc.clearDisplay(address);

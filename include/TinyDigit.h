@@ -1,10 +1,11 @@
 /**
  * TinyDigit.h
+ * 3x5 font map for numbers only
  */
 
 const int digit3x5landscape_count = 10;
 
-unsigned const int PROGMEM digit3x5landscape[10][3] = {
+unsigned const int PROGMEM digit3x5landscape[digit3x5landscape_count][3] = {
   
    // only digits!
   { 0x1F, 0x11, 0x1F}, //0

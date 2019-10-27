@@ -8,20 +8,24 @@
 * Board: Arduino Pro Mini/Nano
 *
 * Extension modules and hw used:
-*  - MAX7219, I2C
 *  - SSD1306 OLED dsiplay, I2C
+*  - MAX7219 LED display driver, I2C
 *  - 3x5 digits on 5x7 dot matrix
 *  - reed switch, sensing magnet valve sc
 * Libraries used:
-*  - LedControl by wayoda - Copyright (c) 2012, Eberhard Fahle
 *  - SSD1306Ascii by Bill Greiman - Copyright (c) 2019, Bill Greiman
+*  - LedControl by wayoda - Copyright (c) 2012, Eberhard Fahle
 *
 * BSD license, all text here must be included in any redistribution.
 *
 */
 
+#include <Wire.h>
 #include "LedControl.h"
 #include "TinyDigit.h"
+#include "SSD1306Ascii.h"
+//#include "SSD1306AsciiWire.h"
+#include "SSD1306AsciiAvrI2c.h" /* Use only when no other I2C devices are used! */
 
 #define LED_VERT_OFFSET 2
 #define LED_HOR_OFFSET 1
@@ -29,6 +33,8 @@
 
 #define SW_ON_LEVEL LOW  /* Switch on level */
 #define SW_OFF_LEVEL HIGH  /* Switch off level */
+
+#define OLED_I2C_ADDR 0x3C /* OLED module I2C address */
 
 //Top Level Variables:
 int DEBUG = 1;  //Set to 1 to enable serial monitor debugging info
@@ -89,10 +95,15 @@ byte intensity = 1;
 byte bright_intensity = 8;
 byte dimm_intensity = 1;
 
+char TimeCounterStr[] = "00:00"; /** String to store time counter value, format: MM:SS */
+
+//Set up OLED display
+//SSD1306AsciiWire oled_display;
+SSD1306AsciiAvrI2c oled_display; /* Use only when no other I2C devices are used! */
+
 /* Function declarations */
 
 void StateMachine_counter1();
-void StateMachine_display1();
 void StateMachine_sw1();
 void StateMachine_sw2();
 void StateMachine_led1();
@@ -101,6 +112,9 @@ void bright_display1(int dnum2disp);
 void dimm_display1(int dnum2disp);
 void disp2digit_on_5x7(int d_address, int num2disp, int d_intensity);
 void puttinydigit3x5l(int address, byte x, byte y, char c);
+void disp_MinsAsColumn(int dispMinutes, byte dispCol);
+void update_TimeCounterStr(int tMinutes, int tSeconds);
+void display_on_oled(int dispMinutes, int dispSeconds);
 
 /* Functions */
 
@@ -114,6 +128,15 @@ void setup() {
   pinMode(pin_sw2, INPUT_PULLUP); //INPUT => reverse logic!
   pinMode(pin_led1, OUTPUT);
 
+  // OLED init
+  Wire.begin();
+  oled_display.begin(&Adafruit128x32, OLED_I2C_ADDR);
+  oled_display.clear();
+  //oled_display.setFont(Adafruit5x7);
+  oled_display.setFont(fixed_bold10x15);
+  //oled_display.set2X();
+  oled_display.setRow(0);
+  oled_display.println(F("Brew Timer "));
   //initialize the 4 matrix panels
   //we have already set the number of devices when we created the LedControl
   int devices = lc.getDeviceCount();
@@ -131,7 +154,7 @@ void setup() {
     Serial.println("Debugging is ON");
   }
   lc.setIntensity(0, 15);
-  disp2digit_on_5x7(0, 3, bright_intensity);
+  disp2digit_on_5x7(0, 4, bright_intensity);
   delay(1000);
   lc.setIntensity(0, dimm_intensity);
   disp2digit_on_5x7(0, 0, dimm_intensity);
@@ -139,10 +162,14 @@ void setup() {
   StateMachine_counter1();
   //StateMachine_sw1();
   StateMachine_sw2();
-
+  oled_display.clear();
+  display_on_oled(0,0);
 }
 
 void loop() {
+  //oled_display.clear();
+  
+  
   //Instruct all the state machines to proceed one step
   //StateMachine_sw1();
   StateMachine_sw2();
@@ -166,8 +193,7 @@ void loop() {
 
   }
   StateMachine_counter1();
-  StateMachine_display1();
-
+  
 }
 
 /**
@@ -198,24 +224,33 @@ void StateMachine_counter1() {
       start_counter1 = millis();
       state_counter1 = 3;
       clear_display1();
-      bright_display1(0);
+      bright_display1(iSecCounter1);
+      disp_MinsAsColumn(iMinCounter1,3);
+      oled_display.clear();
+      display_on_oled(iMinCounter1,iSecCounter1); /* displaying 00:00 on OLED screen */
       break;
     case 3: //Counting
       prev_iSecCounter1 = iSecCounter1;
       elapsed_counter1 = millis() - start_counter1;
       iSecCounter1 = int ((elapsed_counter1 / 1000) % 60);
+      iMinCounter1 = int ((elapsed_counter1 / 1000) / 60);
       if (iSecCounter1 != prev_iSecCounter1) {
         if (DEBUG) {
-          Serial.print(F("iSecCounter1: "));
+          Serial.print(F("iMinCounter1: "));
+          Serial.print(iMinCounter1, DEC);
+          Serial.print(F(" iSecCounter1: "));
           Serial.println(iSecCounter1, DEC);
         }
         bright_display1(iSecCounter1);
+        disp_MinsAsColumn(iMinCounter1,3);
+        display_on_oled(iMinCounter1,iSecCounter1);
       }
-      iMinCounter1 = int ((elapsed_counter1 / 1000) / 60);
       break;
     case 4: //Stop
       state_counter1 = 1;
       dimm_display1(iSecCounter1);
+      disp_MinsAsColumn(iMinCounter1,3);
+      oled_display.print(F("stopped"));
       break;
   }
   if (prev_state_counter1 == state_counter1)
@@ -229,27 +264,6 @@ void StateMachine_counter1() {
       Serial.println(state_counter1, DEC);
     }
 
-  }
-}
-
-void StateMachine_display1() {
-
-  state_prev_display1 = state_display1;
-
-  //State Machine Section
-  switch (state_display1) {
-    case 0: //RESET!
-      state_display1 = 1;
-      break;
-    case 1: //Display clear
-      //state_display1 = 2;
-      break;
-    case 2: //Bright display
-      //state_display1 = 3;
-      break;
-    case 3: //Dimm display
-      //state_display1 = 4;
-      break;
   }
 }
 
@@ -512,7 +526,7 @@ void disp2digit_on_5x7(int d_address, int num2disp, int d_intensity) {
 * 
 * @param address : address of the LED matrix display
 * @param x : X coordinate
-* @param y : no Y coordinate can be set! (permanently zeroed)
+* @param y : no Y coordinate can be set! (permanently zeroed currently)
 * @param c : character to display (numbers only)
 */
 void puttinydigit3x5l(int address, byte x, byte y, char c)
@@ -529,3 +543,75 @@ void puttinydigit3x5l(int address, byte x, byte y, char c)
   }
 }
 
+void disp_MinsAsColumn(int dispMinutes, byte dispCol) {
+  int address=0;
+  byte columnBits;
+  dispMinutes = dispMinutes % 10;
+  switch (dispMinutes) {
+    case 0:
+      columnBits=0;
+      break;
+    case 1:
+      columnBits=B00000001;
+      columnBits=B10000000;
+      break;
+    case 2:
+      columnBits=B00000011;
+      columnBits=B11000000;
+      break;
+    case 3:
+      columnBits=B00000111;
+      columnBits=B11100000;
+      break;
+    case 4:
+      columnBits=B00001111;
+      columnBits=B11110000;
+      break;
+    case 5:
+      columnBits=B00011111;
+      columnBits=B11111000;
+      break;
+    case 6:
+      columnBits=B00010000;
+      columnBits=B00001000;
+      break;
+    case 7:
+      columnBits=B00011000;
+      columnBits=B00011000;
+      break;
+    case 8:
+      columnBits=B00011100;
+      columnBits=B00111000;
+      break;
+    case 9:
+      columnBits=B00011110;
+      columnBits=B01111000;
+      break;
+  }
+  lc.setRow(address,dispCol,columnBits);
+}
+
+/**
+* @brief Converts the minutes and seconds to char and updates the TimeCounterStr string
+* @param tMinutes : minutes value
+* @param tSeconds : seconds value
+*/ 
+void update_TimeCounterStr(int tMinutes, int tSeconds) {
+  TimeCounterStr[0] = (char) ((tMinutes / 10)+0x30);
+  TimeCounterStr[1] = (char) ((tMinutes % 10)+0x30);
+  TimeCounterStr[3] = (char) ((tSeconds / 10)+0x30);
+  TimeCounterStr[4] = (char) ((tSeconds % 10)+0x30);
+}
+
+/**
+* @brief Dsiplays the TimeCounterStr string on the OLED screen, format: MM:SS
+* @param dispMinutes : minutes value
+* @param dispSeconds : seconds value
+*/ 
+void display_on_oled(int dispMinutes, int dispSeconds) {
+  update_TimeCounterStr(dispMinutes,dispSeconds);
+  //oled_display.set2X();
+  oled_display.setCol(0);
+  oled_display.setRow(0);
+  oled_display.println(TimeCounterStr);  
+}

@@ -1,5 +1,5 @@
 /**
-* Arduino Brew Timer for LaMarzocco Linea Mini espresso machine
+* Arduino Brew Timer and Temperature Display for LaMarzocco Linea Mini espresso machine
 *
 *
 * @author Robert Klajko
@@ -24,8 +24,8 @@
 #include "LedControl.h"
 #include "TinyDigit.h"
 #include "SSD1306Ascii.h"
-//#include "SSD1306AsciiWire.h"
-#include "SSD1306AsciiAvrI2c.h" /* Use only when no other I2C devices are used! */
+#include "SSD1306AsciiWire.h"
+//#include "SSD1306AsciiAvrI2c.h" /* Use only when no other I2C devices are used! */
 
 #define LED_VERT_OFFSET 2
 #define LED_HOR_OFFSET 1
@@ -48,16 +48,16 @@ unsigned long t_sw1 = 0;             //Typically represents the current time of 
 unsigned long t_0_sw1 = 0;           //The time that we last passed through an interesting state
 unsigned long bounce_delay_sw1 = 20; //The delay to list for bouncing
 
-//Switch Variables - "sw2"
-int state_sw2 = 0;                   //The actual ~state~ of the state machine
-int state_prev_sw2 = 0;              //Remembers the previous state (useful to know when the state has changed)
-int pin_sw2 = 3;                    //Input/Output (IO) pin for the switch
-int value_sw2 = 0;                     //Value of the switch ("HIGH" or "LOW")
-unsigned long t_sw2 = 0;             //Typically represents the current time of the switch
-unsigned long t_0_sw2 = 0;           //The time that we last passed through an interesting state
-unsigned long bounce_delay_sw2 = 5; //The delay to list for bouncing
+//Switch Variables - "Reed_Switch"
+int state_Reed_Switch = 0;                   //The actual ~state~ of the state machine
+int state_prev_Reed_Switch = 0;              //Remembers the previous state (useful to know when the state has changed)
+int pin_Reed_Switch = 3;                    //Input/Output (IO) pin for the switch
+int value_Reed_Switch = 0;                     //Value of the switch ("HIGH" or "LOW")
+unsigned long t_Reed_Switch = 0;             //Typically represents the current time of the switch
+unsigned long t_0_Reed_Switch = 0;           //The time that we last passed through an interesting state
+unsigned long bounce_delay_Reed_Switch = 5; //The delay to list for bouncing
 unsigned int bin_counter = 0; //binary counter
-int logic_sw2 = 0; // logic switch
+int logic_Reed_Switch = 0; // logic switch
 
 
 //Display variables
@@ -86,7 +86,7 @@ unsigned long off_delay_led1 = 500;
 int beep_count_led1 = 0;
 int beep_number_led1 = 2;
 
-// Setup LED Matrix
+// Setup MAX7219 LED Matrix
 // pin 12 is connected to the DataIn on the display
 // pin 11 is connected to the CLK on the display
 // pin 10 is connected to LOAD on the display
@@ -98,14 +98,14 @@ byte dimm_intensity = 1;
 char TimeCounterStr[] = "00:00"; /** String to store time counter value, format: MM:SS */
 
 //Set up OLED display
-//SSD1306AsciiWire oled_display;
-SSD1306AsciiAvrI2c oled_display; /* Use only when no other I2C devices are used! */
+SSD1306AsciiWire oled_display;
+//SSD1306AsciiAvrI2c oled_display; /* Use only when no other I2C devices are used! */
 
 /* Function declarations */
 
 void StateMachine_counter1();
 void StateMachine_sw1();
-void StateMachine_sw2();
+void StateMachine_Reed_Switch();
 void StateMachine_led1();
 void clear_display1();
 void bright_display1(int dnum2disp);
@@ -116,66 +116,36 @@ void disp_MinsAsColumn(int dispMinutes, byte dispCol);
 void update_TimeCounterStr(int tMinutes, int tSeconds);
 void display_on_oled(int dispMinutes, int dispSeconds);
 
+void Gpio_Init(void);
+void Ssd1306_Oled_Init(void);
+void Max7219_Led_Matrix_Init(void);
+
 /* Functions */
 
 void setup() {
   //if DEBUG is turned on, intialize serial connection
   if (DEBUG) {
     Serial.begin(115200);
-  }
-  // initialize digital pins
-  pinMode(pin_sw1, INPUT_PULLUP); //INPUT => reverse logic!
-  pinMode(pin_sw2, INPUT_PULLUP); //INPUT => reverse logic!
-  pinMode(pin_led1, OUTPUT);
-
-  // OLED init
-  Wire.begin();
-  oled_display.begin(&Adafruit128x32, OLED_I2C_ADDR);
-  oled_display.clear();
-  //oled_display.setFont(Adafruit5x7);
-  oled_display.setFont(fixed_bold10x15);
-  //oled_display.set2X();
-  oled_display.setRow(0);
-  oled_display.println(F("Brew Timer "));
-  //initialize the 4 matrix panels
-  //we have already set the number of devices when we created the LedControl
-  int devices = lc.getDeviceCount();
-  //we have to init all devices in a loop
-  for (int address = 0; address < devices; address++) {
-    /*The MAX72XX is in power-saving mode on startup*/
-    lc.shutdown(address, false);
-    /* Set the brightness to a medium values */
-    lc.setIntensity(address, dimm_intensity);
-    /* and clear the display */
-    lc.clearDisplay(address);
-  }
-  
-  if (DEBUG) {
     Serial.println("Debugging is ON");
   }
-  lc.setIntensity(0, 15);
-  disp2digit_on_5x7(0, 4, bright_intensity);
-  delay(1000);
-  lc.setIntensity(0, dimm_intensity);
-  disp2digit_on_5x7(0, 0, dimm_intensity);
+  Gpio_Init();
+  Max7219_Led_Matrix_Init();
+  Ssd1306_Oled_Init();
+    
   // SM inits
   StateMachine_counter1();
   //StateMachine_sw1();
-  StateMachine_sw2();
-  oled_display.clear();
-  display_on_oled(0,0);
+  StateMachine_Reed_Switch();
+  
 }
 
 void loop() {
-  //oled_display.clear();
-  
-  
-  //Instruct all the state machines to proceed one step
+    //Instruct all the state machines to proceed one step
   //StateMachine_sw1();
-  StateMachine_sw2();
+  StateMachine_Reed_Switch();
 
   //Provide events that can force the state machines to change state
-  switch (logic_sw2) {
+  switch (logic_Reed_Switch) {
     case 0:
       digitalWrite(pin_led1, LOW);
       if (state_counter1 == 3)
@@ -379,68 +349,68 @@ void StateMachine_sw1() {
 }
 
 /**
-* @brief Switch-2 state machine, extended with a logic switch wich handles the 50Hz switching of reed switch on the solenoid
+* @brief Switch-2 state machine, extended with a logic switch which handles the 50Hz switching of reed switch on the solenoid
 */
-void StateMachine_sw2() {
+void StateMachine_Reed_Switch() {
 
   //Common code for every state
-  state_prev_sw2 = state_sw2;
+  state_prev_Reed_Switch = state_Reed_Switch;
 
   //State Machine Section
-  switch (state_sw2) {
+  switch (state_Reed_Switch) {
     case 0: //RESET!
       // variables initialization
       bin_counter = 0;
-      logic_sw2 = 0;
-      value_sw2 = SW_OFF_LEVEL;
-      state_sw2 = 1;
+      logic_Reed_Switch = 0;
+      value_Reed_Switch = SW_OFF_LEVEL;
+      state_Reed_Switch = 1;
       break;
 
     case 1: //Start SW timer
       //Start debounce timer and proceed to state3, "OFF, armed to ON"
-      t_0_sw2 = millis();
-      state_sw2 = 2;
+      t_0_Reed_Switch = millis();
+      state_Reed_Switch = 2;
       break;
 
     case 2: //Timer stop
       //Check to see if debounce delay has passed
-      t_sw2 = millis();
-      if (t_sw2 - t_0_sw2 > bounce_delay_sw2) {
-        state_sw2 = 3;
+      t_Reed_Switch = millis();
+      if (t_Reed_Switch - t_0_Reed_Switch > bounce_delay_Reed_Switch) {
+        state_Reed_Switch = 3;
       }
       break;
 
     case 3: //Read SW pin
-      value_sw2 = digitalRead(pin_sw2);
-      state_sw2 = 4;
+      value_Reed_Switch = digitalRead(pin_Reed_Switch);
+      state_Reed_Switch = 4;
       break;
     case 4: //Rotate binary counter
       bin_counter = bin_counter << 1;
-      if (value_sw2 == SW_ON_LEVEL) {
+      if (value_Reed_Switch == SW_ON_LEVEL) {
         bin_counter++ ;
       }
       if (DEBUG) {
         //Serial.print(F("bin_counter: "));
         //Serial.println(bin_counter, BIN);
       }
-      state_sw2 = 5;
+      state_Reed_Switch = 5;
       break;
 
     case 5: //Logic SW
       if (bin_counter > 0) {
-        logic_sw2 = 1;
+        logic_Reed_Switch = 1;
         if (DEBUG) {
-          //Serial.println(F("SM-SW2: logic switch set ON"));
+          //Serial.println(F("SM-Reed_Switch: logic switch set ON"));
         }
       }
       else
       {
-        logic_sw2 = 0;
+        logic_Reed_Switch = 0;
         if (DEBUG) {
-          //Serial.println("SM-SW2: logic switch set OFF");
+          //Serial.println("SM-Reed_Switch: logic switch set OFF");
         }
       }
-      state_sw2 = 1;
+      state_Reed_Switch = 1;
 
       break;
 
@@ -614,4 +584,38 @@ void display_on_oled(int dispMinutes, int dispSeconds) {
   oled_display.setCol(0);
   oled_display.setRow(0);
   oled_display.println(TimeCounterStr);  
+}
+
+void Gpio_Init(void) {
+  pinMode(pin_sw1, INPUT_PULLUP); //INPUT => reverse logic!
+  pinMode(pin_Reed_Switch, INPUT_PULLUP); //INPUT => reverse logic!
+  pinMode(pin_led1, OUTPUT);
+}
+
+void Ssd1306_Oled_Init(void) {
+  Wire.begin();
+  oled_display.begin(&Adafruit128x32, OLED_I2C_ADDR);
+  oled_display.clear();
+  oled_display.setFont(fixed_bold10x15);
+  oled_display.setRow(0);
+  oled_display.println(F("Brew Timer "));
+  delay(1500);
+  oled_display.clear();
+  display_on_oled(0,0);
+}
+
+void Max7219_Led_Matrix_Init(void) {
+  //we have already set the number of devices when we created the LedControl
+  int devices = lc.getDeviceCount();
+  //we have to init all devices in a loop
+  for (int address = 0; address < devices; address++) {
+    /*The MAX72XX is in power-saving mode on startup*/
+    lc.shutdown(address, false);
+    /* Set the brightness to a medium values */
+    lc.setIntensity(address, dimm_intensity);
+    /* and clear the display */
+    lc.clearDisplay(address);
+  }
+  lc.setIntensity(0, dimm_intensity);
+  disp2digit_on_5x7(0, 0, dimm_intensity);
 }

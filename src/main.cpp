@@ -22,10 +22,10 @@
 
 #include <Wire.h>
 #include "LedControl.h"
-#include "TinyDigit.h"
 #include "SSD1306Ascii.h"
 #include "SSD1306AsciiWire.h"
 //#include "SSD1306AsciiAvrI2c.h" /* Use only when no other I2C devices are used! */
+#include "TinyDigit.h"
 
 #define LED_VERT_OFFSET 2
 #define LED_HOR_OFFSET 1
@@ -36,17 +36,28 @@
 
 #define OLED_I2C_ADDR 0x3C /* OLED module I2C address */
 
+#define COUNTER_STATE_RESET 0
+#define COUNTER_STATE_DISABLED 1
+#define COUNTER_STATE_START 2
+#define COUNTER_STATE_COUNTING 3
+#define COUNTER_STATE_STOP 4
+
+#define DISPLAY_CLEAR_TRUE true
+#define DISPLAY_CLEAR_FALSE false
+#define DISPLAY_STOPPED_TRUE true
+#define DISPLAY_STOPPED_FALSE false
+
 //Top Level Variables:
 int DEBUG = 1;  //Set to 1 to enable serial monitor debugging info
 
 //Switch Variables - "sw1"
-int state_sw1 = 0;                   //The actual ~state~ of the state machine
-int state_prev_sw1 = 0;              //Remembers the previous state (useful to know when the state has changed)
-int pin_sw1 = 3;                    //Input/Output (IO) pin for the switch
-int value_sw1 = 0;                     //Value of the switch ("HIGH" or "LOW")
-unsigned long t_sw1 = 0;             //Typically represents the current time of the switch
-unsigned long t_0_sw1 = 0;           //The time that we last passed through an interesting state
-unsigned long bounce_delay_sw1 = 20; //The delay to list for bouncing
+int state_Manual_Switch = 0;                   //The actual ~state~ of the state machine
+int state_prev_Manual_Switch = 0;              //Remembers the previous state (useful to know when the state has changed)
+int pin_Manual_Switch = 3;                    //Input/Output (IO) pin for the switch
+int value_Manual_Switch = 0;                     //Value of the switch ("HIGH" or "LOW")
+unsigned long t_Manual_Switch = 0;             //Typically represents the current time of the switch
+unsigned long t_0_Manual_Switch = 0;           //The time that we last passed through an interesting state
+unsigned long bounce_delay_Manual_Switch = 20; //The delay to list for bouncing
 
 //Switch Variables - "Reed_Switch"
 int state_Reed_Switch = 0;                   //The actual ~state~ of the state machine
@@ -55,9 +66,9 @@ int pin_Reed_Switch = 3;                    //Input/Output (IO) pin for the swit
 int value_Reed_Switch = 0;                     //Value of the switch ("HIGH" or "LOW")
 unsigned long t_Reed_Switch = 0;             //Typically represents the current time of the switch
 unsigned long t_0_Reed_Switch = 0;           //The time that we last passed through an interesting state
-unsigned long bounce_delay_Reed_Switch = 5; //The delay to list for bouncing
-unsigned int bin_counter = 0; //binary counter
-int logic_Reed_Switch = 0; // logic switch
+unsigned long bounce_delay_Reed_Switch = 5; //The delay to filter bouncing
+unsigned int bin_counter = 0; //binary counter for reed switch
+int virtual_Reed_Switch = 0; // virtual switch
 
 
 //Display variables
@@ -104,12 +115,12 @@ SSD1306AsciiWire oled_display;
 /* Function declarations */
 
 void StateMachine_counter1();
-void StateMachine_sw1();
+void StateMachine_Manual_Switch();
 void StateMachine_Reed_Switch();
 void StateMachine_led1();
-void clear_display1();
-void bright_display1(int dnum2disp);
-void dimm_display1(int dnum2disp);
+void clear_Display_Max7219();
+void bright_Display_Max7219(int dnum2disp);
+void dimm_Display_Max7219(int dnum2disp);
 void disp2digit_on_5x7(int d_address, int num2disp, int d_intensity);
 void puttinydigit3x5l(int address, byte x, byte y, char c);
 void disp_MinsAsColumn(int dispMinutes, byte dispCol);
@@ -119,6 +130,9 @@ void display_on_oled(int dispMinutes, int dispSeconds);
 void Gpio_Init(void);
 void Ssd1306_Oled_Init(void);
 void Max7219_Led_Matrix_Init(void);
+void display_Timer_On_All(boolean need_Display_Clear,boolean need_Display_Stopped);
+void display_Timer_On_Ssd1306(boolean need_Display_Clear,boolean need_Display_Stopped);
+void display_Timer_On_Max7219(boolean need_Display_Clear,boolean need_Display_Stopped);
 
 /* Functions */
 
@@ -134,30 +148,26 @@ void setup() {
     
   // SM inits
   StateMachine_counter1();
-  //StateMachine_sw1();
   StateMachine_Reed_Switch();
   
 }
 
 void loop() {
     //Instruct all the state machines to proceed one step
-  //StateMachine_sw1();
   StateMachine_Reed_Switch();
 
   //Provide events that can force the state machines to change state
-  switch (logic_Reed_Switch) {
+  switch (virtual_Reed_Switch) {
     case 0:
       digitalWrite(pin_led1, LOW);
-      if (state_counter1 == 3)
-      {
-        state_counter1 = 4; // Stop counter
+      if (state_counter1 == COUNTER_STATE_COUNTING) {
+        state_counter1 = COUNTER_STATE_STOP;
       }
       break;
     case 1:
       digitalWrite(pin_led1, HIGH);
-      if (state_counter1 == 1)
-      {
-        state_counter1 = 2; // Start counter
+      if (state_counter1 == COUNTER_STATE_DISABLED) {
+        state_counter1 = COUNTER_STATE_START;
       }
       break;
 
@@ -175,31 +185,24 @@ void StateMachine_counter1() {
 
   //State Machine Section
   switch (state_counter1) {
-    case 0: //RESET!
+    case COUNTER_STATE_RESET:
       iSecCounter1 = 0;
       iMinCounter1 = 0;
       elapsed_counter1 = 0;
-      state_counter1 = 1;
-      if (DEBUG) {
-        //Serial.println(iSecCounter1);
-      }
+      state_counter1 = COUNTER_STATE_DISABLED;
       break;
-    case 1: //Disabled
-      //state_counter1 = 2;
+    case COUNTER_STATE_DISABLED:
+      //waiting for START event
       break;
-    case 2: //Start
+    case COUNTER_STATE_START:
       iSecCounter1 = 0;
       iMinCounter1 = 0;
       elapsed_counter1 = 0;
       start_counter1 = millis();
-      state_counter1 = 3;
-      clear_display1();
-      bright_display1(iSecCounter1);
-      disp_MinsAsColumn(iMinCounter1,3);
-      oled_display.clear();
-      display_on_oled(iMinCounter1,iSecCounter1); /* displaying 00:00 on OLED screen */
+      state_counter1 = COUNTER_STATE_COUNTING;
+      display_Timer_On_All(DISPLAY_CLEAR_TRUE,DISPLAY_STOPPED_FALSE);
       break;
-    case 3: //Counting
+    case COUNTER_STATE_COUNTING:
       prev_iSecCounter1 = iSecCounter1;
       elapsed_counter1 = millis() - start_counter1;
       iSecCounter1 = int ((elapsed_counter1 / 1000) % 60);
@@ -211,16 +214,12 @@ void StateMachine_counter1() {
           Serial.print(F(" iSecCounter1: "));
           Serial.println(iSecCounter1, DEC);
         }
-        bright_display1(iSecCounter1);
-        disp_MinsAsColumn(iMinCounter1,3);
-        display_on_oled(iMinCounter1,iSecCounter1);
+        display_Timer_On_All(DISPLAY_CLEAR_FALSE,DISPLAY_STOPPED_FALSE);
       }
       break;
-    case 4: //Stop
-      state_counter1 = 1;
-      dimm_display1(iSecCounter1);
-      disp_MinsAsColumn(iMinCounter1,3);
-      oled_display.print(F("stopped"));
+    case COUNTER_STATE_STOP:
+      state_counter1 = COUNTER_STATE_DISABLED;
+      display_Timer_On_All(DISPLAY_CLEAR_FALSE,DISPLAY_STOPPED_TRUE);
       break;
   }
   if (prev_state_counter1 == state_counter1)
@@ -238,75 +237,39 @@ void StateMachine_counter1() {
 }
 
 /**
-* @brief Clears the dot matrix display(s)
-*/ 
-void clear_display1() {
-  for (byte address = 0; address < 2; address++) {
-    lc.clearDisplay(address);
-  }
-  if (DEBUG) {
-    //Serial.println("Clear display1");
-  }
-}
-
-/**
-* @brief Displays the number on the LED display with "bright_intensity" brightness
-* @param dnum2disp : number to display
+* @brief Manual switch state machine
 */
-void bright_display1(int dnum2disp) {
-  disp2digit_on_5x7(0, dnum2disp, bright_intensity);
-  if (DEBUG) {
-    //Serial.print(F("Bright: "));
-    //Serial.println(dnum2disp);
-  }
-}
-
-/**
-* @brief Displays the number on the LED display with "dimm_intensity" brightness
-* @param dnum2disp : number to display
-*/
-void dimm_display1(int dnum2disp) {
-  disp2digit_on_5x7(0, dnum2disp, dimm_intensity);
-  if (DEBUG) {
-    //Serial.print(F("Dimm: "));
-    //Serial.println(dnum2disp);
-  }
-}
-
-/**
-* @brief Switch-1 state machine
-*/
-void StateMachine_sw1() {
+void StateMachine_Manual_Switch() {
 
   //Common code for every state
-  value_sw1 = digitalRead(pin_sw1);
-  state_prev_sw1 = state_sw1;
+  value_Manual_Switch = digitalRead(pin_Manual_Switch);
+  state_prev_Manual_Switch = state_Manual_Switch;
 
   //State Machine Section
-  switch (state_sw1) {
+  switch (state_Manual_Switch) {
     case 0: //RESET!
-      // state_sw1 variable initialization
-      state_sw1 = 1;
+      // state_Manual_Switch variable initialization
+      state_Manual_Switch = 1;
       break;
 
     case 1: //OFF, wait for on
       //Wait for the pin to go low (switch=ON)
-      if (value_sw1 == SW_ON_LEVEL) {
-        state_sw1 = 2;
+      if (value_Manual_Switch == SW_ON_LEVEL) {
+        state_Manual_Switch = 2;
       }
       break;
 
     case 2: //OFF, arming to ON
       //Start debounce timer and proceed to state3, "OFF, armed to ON"
-      t_0_sw1 = millis();
-      state_sw1 = 3;
+      t_0_Manual_Switch = millis();
+      state_Manual_Switch = 3;
       break;
 
     case 3: //OFF, armed to ON
       //Check to see if debounce delay has passed and switch still ON
-      t_sw1 = millis();
-      if (t_sw1 - t_0_sw1 > bounce_delay_sw1 && value_sw1 == SW_ON_LEVEL) {
-        state_sw1 = 4;
+      t_Manual_Switch = millis();
+      if (t_Manual_Switch - t_0_Manual_Switch > bounce_delay_Manual_Switch && value_Manual_Switch == SW_ON_LEVEL) {
+        state_Manual_Switch = 4;
       }
       break;
 
@@ -314,27 +277,27 @@ void StateMachine_sw1() {
       if (DEBUG) {
         Serial.println(F("State4, SW1 switched ON"));
       }
-      state_sw1 = 5;
+      state_Manual_Switch = 5;
       break;
 
     case 5: //ON, wait for off
       //Wait for the pin to go high (switch=OFF)
-      if (value_sw1 == SW_OFF_LEVEL) {
-        state_sw1 = 6;
+      if (value_Manual_Switch == SW_OFF_LEVEL) {
+        state_Manual_Switch = 6;
       }
       break;
 
     case 6: //ON, arming to OFF
       //Start debounce timer and proceed to state7, "OFF, armed to ON"
-      t_0_sw1 = millis();
-      state_sw1 = 7;
+      t_0_Manual_Switch = millis();
+      state_Manual_Switch = 7;
       break;
 
     case 7: //ON, armed to OFF
       //Check to see if debounce delay has passed and switch still OFF
-      t_sw1 = millis();
-      if (t_sw1 - t_0_sw1 > bounce_delay_sw1 && value_sw1 == SW_OFF_LEVEL) {
-        state_sw1 = 8;
+      t_Manual_Switch = millis();
+      if (t_Manual_Switch - t_0_Manual_Switch > bounce_delay_Manual_Switch && value_Manual_Switch == SW_OFF_LEVEL) {
+        state_Manual_Switch = 8;
       }
       break;
     case 8: //Switched OFF
@@ -342,14 +305,14 @@ void StateMachine_sw1() {
         Serial.println(F("State8, SW1 switched OFF"));
       }
       //go back to State1
-      state_sw1 = 1;
+      state_Manual_Switch = 1;
       break;
   }
 
 }
 
 /**
-* @brief Switch-2 state machine, extended with a logic switch which handles the 50Hz switching of reed switch on the solenoid
+* @brief Reed switch state machine, extended with a logic switch which handles the 50Hz switching of reed switch on the solenoid
 */
 void StateMachine_Reed_Switch() {
 
@@ -361,7 +324,7 @@ void StateMachine_Reed_Switch() {
     case 0: //RESET!
       // variables initialization
       bin_counter = 0;
-      logic_Reed_Switch = 0;
+      virtual_Reed_Switch = 0;
       value_Reed_Switch = SW_OFF_LEVEL;
       state_Reed_Switch = 1;
       break;
@@ -398,14 +361,14 @@ void StateMachine_Reed_Switch() {
 
     case 5: //Logic SW
       if (bin_counter > 0) {
-        logic_Reed_Switch = 1;
+        virtual_Reed_Switch = 1;
         if (DEBUG) {
           //Serial.println(F("SM-Reed_Switch: logic switch set ON"));
         }
       }
       else
       {
-        logic_Reed_Switch = 0;
+        virtual_Reed_Switch = 0;
         if (DEBUG) {
           //Serial.println("SM-Reed_Switch: logic switch set OFF");
         }
@@ -471,6 +434,40 @@ void StateMachine_led1() {
       break;
   }
 
+}
+
+/**
+* @brief Clears the dot matrix display(s)
+*/ 
+void clear_Display_Max7219() {
+  int devices = lc.getDeviceCount();
+  for (byte address = 0; address < devices; address++) {
+    lc.clearDisplay(address);
+  }  
+}
+
+/**
+* @brief Displays the number on the LED display with "bright_intensity" brightness
+* @param dnum2disp : number to display
+*/
+void bright_Display_Max7219(int dnum2disp) {
+  disp2digit_on_5x7(0, dnum2disp, bright_intensity);
+  if (DEBUG) {
+    //Serial.print(F("Bright: "));
+    //Serial.println(dnum2disp);
+  }
+}
+
+/**
+* @brief Displays the number on the LED display with "dimm_intensity" brightness
+* @param dnum2disp : number to display
+*/
+void dimm_Display_Max7219(int dnum2disp) {
+  disp2digit_on_5x7(0, dnum2disp, dimm_intensity);
+  if (DEBUG) {
+    //Serial.print(F("Dimm: "));
+    //Serial.println(dnum2disp);
+  }
 }
 
 /** 
@@ -580,14 +577,13 @@ void update_TimeCounterStr(int tMinutes, int tSeconds) {
 */ 
 void display_on_oled(int dispMinutes, int dispSeconds) {
   update_TimeCounterStr(dispMinutes,dispSeconds);
-  //oled_display.set2X();
   oled_display.setCol(0);
   oled_display.setRow(0);
   oled_display.println(TimeCounterStr);  
 }
 
 void Gpio_Init(void) {
-  pinMode(pin_sw1, INPUT_PULLUP); //INPUT => reverse logic!
+  pinMode(pin_Manual_Switch, INPUT_PULLUP); //INPUT => reverse logic!
   pinMode(pin_Reed_Switch, INPUT_PULLUP); //INPUT => reverse logic!
   pinMode(pin_led1, OUTPUT);
 }
@@ -618,4 +614,32 @@ void Max7219_Led_Matrix_Init(void) {
   }
   lc.setIntensity(0, dimm_intensity);
   disp2digit_on_5x7(0, 0, dimm_intensity);
+}
+
+void display_Timer_On_All(boolean need_Display_Clear,boolean need_Display_Stopped) {
+  display_Timer_On_Max7219(need_Display_Clear,need_Display_Stopped);
+  display_Timer_On_Ssd1306(need_Display_Clear,need_Display_Stopped);
+}
+
+void display_Timer_On_Ssd1306(boolean need_Display_Clear,boolean need_Display_Stopped) {
+  if(need_Display_Clear) {
+    oled_display.clear();
+  }
+  display_on_oled(iMinCounter1,iSecCounter1);
+  if(need_Display_Stopped) {
+    oled_display.print(F("stopped"));
+  }          
+}
+
+void display_Timer_On_Max7219(boolean need_Display_Clear,boolean need_Display_Stopped) {
+  if(need_Display_Clear) {
+    clear_Display_Max7219();
+  }
+  if(need_Display_Stopped) {
+    dimm_Display_Max7219(iSecCounter1);
+  }
+  else {
+    bright_Display_Max7219(iSecCounter1);
+  }
+  disp_MinsAsColumn(iMinCounter1,3);
 }

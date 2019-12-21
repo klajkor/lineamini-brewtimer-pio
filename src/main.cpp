@@ -12,20 +12,28 @@
 *  - MAX7219 LED display driver, I2C
 *  - 3x5 digits on 5x7 dot matrix
 *  - reed switch, sensing magnet valve sc
+*  - INA219, I2C
 * Libraries used:
 *  - SSD1306Ascii by Bill Greiman - Copyright (c) 2019, Bill Greiman
 *  - LedControl by wayoda - Copyright (c) 2012, Eberhard Fahle
+*  - Adafruit INA219 by Adafruit - Copyright (c) 2012, Adafruit Industries
 *
 * BSD license, all text here must be included in any redistribution.
 *
 */
 
+#include <Arduino.h>
+#include <math.h>
 #include <Wire.h>
+#include <Adafruit_INA219.h>
 #include "LedControl.h"
 #include "SSD1306Ascii.h"
 #include "SSD1306AsciiWire.h"
 //#include "SSD1306AsciiAvrI2c.h" /* Use only when no other I2C devices are used! */
 #include "TinyDigit.h"
+
+//uncomment the line below if you would like to have debug messages
+//#define SERIAL_DEBUG_ENABLED 1
 
 #define LED_VERT_OFFSET 2
 #define LED_HOR_OFFSET 1
@@ -47,6 +55,47 @@
 #define DISPLAY_STOPPED_TRUE true
 #define DISPLAY_STOPPED_FALSE false
 
+#define VIRT_REED_SWITCH_OFF 0
+#define VIRT_REED_SWITCH_ON 1
+
+#define REED_SWITCH_STATE_RESET 0
+#define REED_SWITCH_STATE_START_TIMER 1
+#define REED_SWITCH_STATE_STOP_TIMER 2
+#define REED_SWITCH_STATE_READ_PIN 3
+#define REED_SWITCH_STATE_ROTATE_BIN_COUNTER 4
+#define REED_SWITCH_STATE_SET_LOGIC_SWITCH 5
+
+#define VOLT_METER_STATE_RESET 0
+#define VOLT_METER_STATE_START_TIMER 1
+#define VOLT_METER_STATE_STOP_TIMER 2
+#define VOLT_METER_STATE_READ_VOLTAGE 3
+#define VOLT_METER_STATE_CONVERT_TO_TEMPERATURE 4
+
+// Thermistor calculation values
+// Original idea and code from Jimmy Roasts, https://github.com/JimmyRoasts/LaMarzoccoTempSensor
+
+// resistance at 25 degrees C
+#define THERMISTORNOMINAL_V1 50000  // version 1
+#define THERMISTORNOMINAL_V2 49120  // version 2 updated calculation
+// temp. for nominal resistance (almost always 25 C)
+#define TEMPERATURENOMINAL 25   
+// how many samples to take and average, more takes longer
+// but is more 'smooth'
+#define NUMSAMPLES 100
+// The beta coefficient of the thermistor (usually 3000-4000)
+#define BCOEFFICIENT_V1 4400  // version 1
+#define BCOEFFICIENT_V2 3977  // version 2, updated calculation
+// the value of the 'other' resistor
+#define SERIESRESISTOR_V1 6960
+#define SERIESRESISTOR_V2 6190  // version 2, measured on board
+//scaling value to convert voltage
+#define VOLTAGESCALE 12.1
+//reference voltage
+//#define VOLTAGEREF 4.585
+#define VOLTAGEREF 4.16
+
+#define LMREF  5.07 //measured from LMBoard --- GND Board
+
 //Top Level Variables:
 int DEBUG = 1;  //Set to 1 to enable serial monitor debugging info
 
@@ -61,15 +110,19 @@ unsigned long bounce_delay_Manual_Switch = 20; //The delay to list for bouncing
 
 //Switch Variables - "Reed_Switch"
 int state_Reed_Switch = 0;                   //The actual ~state~ of the state machine
-int state_prev_Reed_Switch = 0;              //Remembers the previous state (useful to know when the state has changed)
 int pin_Reed_Switch = 3;                    //Input/Output (IO) pin for the switch
 int value_Reed_Switch = 0;                     //Value of the switch ("HIGH" or "LOW")
 unsigned long t_Reed_Switch = 0;             //Typically represents the current time of the switch
 unsigned long t_0_Reed_Switch = 0;           //The time that we last passed through an interesting state
 unsigned long bounce_delay_Reed_Switch = 5; //The delay to filter bouncing
 unsigned int bin_counter = 0; //binary counter for reed switch
-int virtual_Reed_Switch = 0; // virtual switch
+int virtual_Reed_Switch = VIRT_REED_SWITCH_OFF; // virtual switch
 
+//State Machine Variables - "Volt Meter"
+int state_Volt_Meter = 0;
+unsigned long t_Volt_Meter = 0;
+unsigned long t_0_Volt_Meter = 0;
+unsigned long delay_Between_2_Measures = 200;
 
 //Display variables
 int state_display1 = 0;                   //The actual ~state~ of the state machine
@@ -112,12 +165,31 @@ char TimeCounterStr[] = "00:00"; /** String to store time counter value, format:
 SSD1306AsciiWire oled_display;
 //SSD1306AsciiAvrI2c oled_display; /* Use only when no other I2C devices are used! */
 
+// Current and voltage sensor class
+Adafruit_INA219 ina219_monitor;
+#define INA219_VCC_PIN 3
+#define INA219_GND_PIN 2
+
+// INA219 sensor variables
+float bus_Voltage_V;    /** Measured bus voltage in V*/
+float bus_Voltage_mV;    /** Measured bus voltage in mV*/
+char volt_String[] = "99999.9";         /** String to store measured voltage value in mV */
+
+// Calculated temperature
+float calc_Temperature_V1 = 0.0;
+char temperature_String_V1[] = "  999.9";
+float steinhart = 0.0;
+float calc_Temperature_V2 = 0.0;
+char temperature_String_V2[] = "  999.9";
+float thermistor_Res = 0.00; // Thermistor calculated resistance
+
 /* Function declarations */
 
 void StateMachine_counter1();
 void StateMachine_Manual_Switch();
 void StateMachine_Reed_Switch();
 void StateMachine_led1();
+void StateMachine_Volt_Meter();
 void clear_Display_Max7219();
 void bright_Display_Max7219(int dnum2disp);
 void dimm_Display_Max7219(int dnum2disp);
@@ -134,21 +206,28 @@ void display_Timer_On_All(boolean need_Display_Clear,boolean need_Display_Stoppe
 void display_Timer_On_Ssd1306(boolean need_Display_Clear,boolean need_Display_Stopped);
 void display_Timer_On_Max7219(boolean need_Display_Clear,boolean need_Display_Stopped);
 
+void ina219_Init(void);
+void get_Voltage(void);
+void calculate_Temperature_V2(void);
+
 /* Functions */
 
 void setup() {
   //if DEBUG is turned on, intialize serial connection
-  if (DEBUG) {
-    Serial.begin(115200);
-    Serial.println("Debugging is ON");
-  }
+  // debug display
+  #ifdef SERIAL_DEBUG_ENABLED
+  Serial.begin(115200);
+  Serial.println(F("Debugging is ON"));
+  #endif
   Gpio_Init();
   Max7219_Led_Matrix_Init();
   Ssd1306_Oled_Init();
+  ina219_Init();
     
   // SM inits
   StateMachine_counter1();
   StateMachine_Reed_Switch();
+  StateMachine_Volt_Meter();
   
 }
 
@@ -158,13 +237,13 @@ void loop() {
 
   //Provide events that can force the state machines to change state
   switch (virtual_Reed_Switch) {
-    case 0:
+    case VIRT_REED_SWITCH_OFF:
       digitalWrite(pin_led1, LOW);
       if (state_counter1 == COUNTER_STATE_COUNTING) {
         state_counter1 = COUNTER_STATE_STOP;
       }
       break;
-    case 1:
+    case VIRT_REED_SWITCH_ON:
       digitalWrite(pin_led1, HIGH);
       if (state_counter1 == COUNTER_STATE_DISABLED) {
         state_counter1 = COUNTER_STATE_START;
@@ -173,7 +252,8 @@ void loop() {
 
   }
   StateMachine_counter1();
-  
+  StateMachine_Volt_Meter();
+
 }
 
 /**
@@ -208,12 +288,13 @@ void StateMachine_counter1() {
       iSecCounter1 = int ((elapsed_counter1 / 1000) % 60);
       iMinCounter1 = int ((elapsed_counter1 / 1000) / 60);
       if (iSecCounter1 != prev_iSecCounter1) {
-        if (DEBUG) {
-          Serial.print(F("iMinCounter1: "));
-          Serial.print(iMinCounter1, DEC);
-          Serial.print(F(" iSecCounter1: "));
-          Serial.println(iSecCounter1, DEC);
-        }
+        // debug display
+        #ifdef SERIAL_DEBUG_ENABLED
+        Serial.print(F("iMinCounter1: "));
+        Serial.print(iMinCounter1, DEC);
+        Serial.print(F(" iSecCounter1: "));
+        Serial.println(iSecCounter1, DEC);
+        #endif        
         display_Timer_On_All(DISPLAY_CLEAR_FALSE,DISPLAY_STOPPED_FALSE);
       }
       break;
@@ -228,10 +309,11 @@ void StateMachine_counter1() {
   }
   else
   {
-    if (DEBUG) {
-      Serial.print(F("state_counter1: "));
-      Serial.println(state_counter1, DEC);
-    }
+    // debug display
+    #ifdef SERIAL_DEBUG_ENABLED
+    Serial.print(F("state_counter1: "));
+    Serial.println(state_counter1, DEC);
+    #endif
 
   }
 }
@@ -274,9 +356,6 @@ void StateMachine_Manual_Switch() {
       break;
 
     case 4: //Switched ON
-      if (DEBUG) {
-        Serial.println(F("State4, SW1 switched ON"));
-      }
       state_Manual_Switch = 5;
       break;
 
@@ -301,9 +380,6 @@ void StateMachine_Manual_Switch() {
       }
       break;
     case 8: //Switched OFF
-      if (DEBUG) {
-        Serial.println(F("State8, SW1 switched OFF"));
-      }
       //go back to State1
       state_Manual_Switch = 1;
       break;
@@ -316,64 +392,59 @@ void StateMachine_Manual_Switch() {
 */
 void StateMachine_Reed_Switch() {
 
-  //Common code for every state
-  state_prev_Reed_Switch = state_Reed_Switch;
-
   //State Machine Section
   switch (state_Reed_Switch) {
-    case 0: //RESET!
+    case REED_SWITCH_STATE_RESET: //RESET!
       // variables initialization
       bin_counter = 0;
-      virtual_Reed_Switch = 0;
+      virtual_Reed_Switch = VIRT_REED_SWITCH_OFF;
       value_Reed_Switch = SW_OFF_LEVEL;
-      state_Reed_Switch = 1;
+      state_Reed_Switch = REED_SWITCH_STATE_START_TIMER;
       break;
 
-    case 1: //Start SW timer
+    case REED_SWITCH_STATE_START_TIMER: //Start SW timer
       //Start debounce timer and proceed to state3, "OFF, armed to ON"
       t_0_Reed_Switch = millis();
-      state_Reed_Switch = 2;
+      state_Reed_Switch = REED_SWITCH_STATE_STOP_TIMER;
       break;
 
-    case 2: //Timer stop
+    case REED_SWITCH_STATE_STOP_TIMER: //Timer stop
       //Check to see if debounce delay has passed
       t_Reed_Switch = millis();
       if (t_Reed_Switch - t_0_Reed_Switch > bounce_delay_Reed_Switch) {
-        state_Reed_Switch = 3;
+        state_Reed_Switch = REED_SWITCH_STATE_READ_PIN;
       }
       break;
 
-    case 3: //Read SW pin
+    case REED_SWITCH_STATE_READ_PIN: //Read Switch pin
       value_Reed_Switch = digitalRead(pin_Reed_Switch);
-      state_Reed_Switch = 4;
+      state_Reed_Switch = REED_SWITCH_STATE_ROTATE_BIN_COUNTER;
       break;
-    case 4: //Rotate binary counter
+    case REED_SWITCH_STATE_ROTATE_BIN_COUNTER: //Rotate binary counter
       bin_counter = bin_counter << 1;
       if (value_Reed_Switch == SW_ON_LEVEL) {
         bin_counter++ ;
       }
-      if (DEBUG) {
-        //Serial.print(F("bin_counter: "));
-        //Serial.println(bin_counter, BIN);
-      }
-      state_Reed_Switch = 5;
+      state_Reed_Switch = REED_SWITCH_STATE_SET_LOGIC_SWITCH;
       break;
 
-    case 5: //Logic SW
+    case REED_SWITCH_STATE_SET_LOGIC_SWITCH:
       if (bin_counter > 0) {
-        virtual_Reed_Switch = 1;
-        if (DEBUG) {
-          //Serial.println(F("SM-Reed_Switch: logic switch set ON"));
-        }
+        virtual_Reed_Switch = VIRT_REED_SWITCH_ON;
+        // debug display
+        #ifdef SERIAL_DEBUG_ENABLED
+        Serial.println(F("SM-Reed_Switch: logic switch set ON"));
+        #endif
       }
       else
       {
-        virtual_Reed_Switch = 0;
-        if (DEBUG) {
-          //Serial.println("SM-Reed_Switch: logic switch set OFF");
-        }
+        virtual_Reed_Switch = VIRT_REED_SWITCH_OFF;
+        // debug display
+        #ifdef SERIAL_DEBUG_ENABLED
+        Serial.println(F("SM-Reed_Switch: logic switch set OFF"));
+        #endif        
       }
-      state_Reed_Switch = 1;
+      state_Reed_Switch = REED_SWITCH_STATE_START_TIMER;
 
       break;
 
@@ -400,9 +471,10 @@ void StateMachine_led1() {
 
     case 2: //TURNING ON
       digitalWrite(pin_led1, HIGH);
-      if (DEBUG) {
-        Serial.println(F(":: LED ON"));
-      }
+      // debug display
+      #ifdef SERIAL_DEBUG_ENABLED
+      Serial.println(F(":: LED ON"));
+      #endif
       t_0_led1 = millis();
       state_led1 = 3;
       break;
@@ -418,9 +490,10 @@ void StateMachine_led1() {
       beep_count_led1++;
       t_0_led1 = millis();
       digitalWrite(pin_led1, LOW);
-      if (DEBUG) {
-        Serial.println(F(":: LED off"));
-      }
+      // debug display
+      #ifdef SERIAL_DEBUG_ENABLED
+      Serial.println(F(":: LED off"));
+      #endif
       state_led1 = 5;
       break;
     case 5: //OFF
@@ -452,10 +525,11 @@ void clear_Display_Max7219() {
 */
 void bright_Display_Max7219(int dnum2disp) {
   disp2digit_on_5x7(0, dnum2disp, bright_intensity);
-  if (DEBUG) {
-    //Serial.print(F("Bright: "));
-    //Serial.println(dnum2disp);
-  }
+  // debug display
+  #ifdef SERIAL_DEBUG_ENABLED
+  Serial.print(F("Bright: "));
+  Serial.println(dnum2disp);
+  #endif
 }
 
 /**
@@ -464,10 +538,11 @@ void bright_Display_Max7219(int dnum2disp) {
 */
 void dimm_Display_Max7219(int dnum2disp) {
   disp2digit_on_5x7(0, dnum2disp, dimm_intensity);
-  if (DEBUG) {
-    //Serial.print(F("Dimm: "));
-    //Serial.println(dnum2disp);
-  }
+  // debug display
+  #ifdef SERIAL_DEBUG_ENABLED
+  Serial.print(F("Dimm: "));
+  Serial.println(dnum2disp);
+  #endif
 }
 
 /** 
@@ -642,4 +717,75 @@ void display_Timer_On_Max7219(boolean need_Display_Clear,boolean need_Display_St
     bright_Display_Max7219(iSecCounter1);
   }
   disp_MinsAsColumn(iMinCounter1,3);
+}
+
+void ina219_Init(void)
+{
+  pinMode(INA219_GND_PIN, OUTPUT);
+  pinMode(INA219_VCC_PIN, OUTPUT);
+  digitalWrite(INA219_GND_PIN, LOW);
+  digitalWrite(INA219_VCC_PIN, HIGH);
+  delay(100);
+  ina219_monitor.begin();
+}
+
+void get_Voltage(void)
+{
+  //measure voltage and current
+  bus_Voltage_V = (ina219_monitor.getBusVoltage_V());
+  bus_Voltage_mV = bus_Voltage_V*1000;
+  //convert to text
+  dtostrf(bus_Voltage_mV, 7, 1, volt_String);
+  // debug display
+  #ifdef SERIAL_DEBUG_ENABLED
+  Serial.print(volt_String);
+  Serial.println(F(" mV"));
+  #endif
+}
+
+void calculate_Temperature_V2(void) {
+  thermistor_Res = SERIESRESISTOR_V2 * (1/((LMREF / bus_Voltage_V) -1));
+  steinhart = thermistor_Res / THERMISTORNOMINAL_V2;
+  steinhart = log(steinhart);                  // ln(R/Ro)
+  steinhart /= BCOEFFICIENT_V2;                   // 1/B * ln(R/Ro)
+  steinhart += (1.0 / (TEMPERATURENOMINAL + 273.15)); // + (1/To)
+  steinhart = 1.0 / steinhart;                 // Invert
+  calc_Temperature_V2 = (float) steinhart - 273.15;                         // convert to C
+  dtostrf(calc_Temperature_V2, 7, 1, temperature_String_V2);
+  // debug display
+  #ifdef SERIAL_DEBUG_ENABLED
+  Serial.print(temperature_String_V1);
+  Serial.println(F(" *C"));
+  #endif
+}
+
+void StateMachine_Volt_Meter(void) {
+  
+  switch (state_Volt_Meter) {
+    case VOLT_METER_STATE_RESET:
+      state_Volt_Meter = VOLT_METER_STATE_START_TIMER;
+      break;
+
+    case VOLT_METER_STATE_START_TIMER:
+      t_0_Volt_Meter = millis();
+      state_Volt_Meter = VOLT_METER_STATE_STOP_TIMER;
+      break;
+
+    case VOLT_METER_STATE_STOP_TIMER:
+      t_Volt_Meter = millis();
+      if (t_Volt_Meter - t_0_Volt_Meter > delay_Between_2_Measures) {
+        state_Volt_Meter = VOLT_METER_STATE_READ_VOLTAGE;
+      }
+      break;
+
+    case VOLT_METER_STATE_READ_VOLTAGE:
+      get_Voltage();
+      state_Volt_Meter = VOLT_METER_STATE_CONVERT_TO_TEMPERATURE;
+      break;
+
+    case VOLT_METER_STATE_CONVERT_TO_TEMPERATURE:
+      calculate_Temperature_V2();
+      state_Volt_Meter = VOLT_METER_STATE_START_TIMER;
+      break;
+  } 
 }

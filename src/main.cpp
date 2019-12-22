@@ -26,14 +26,23 @@
 #include <math.h>
 #include <Wire.h>
 #include <Adafruit_INA219.h>
-#include "LedControl.h"
-#include "SSD1306Ascii.h"
-#include "SSD1306AsciiWire.h"
+#include <LedControl.h>
+#include <SSD1306Ascii.h>
+#include <SSD1306AsciiWire.h>
 //#include "SSD1306AsciiAvrI2c.h" /* Use only when no other I2C devices are used! */
+#include <ht16k33.h>
+#include <Adafruit_LEDBackpack.h>
+#include <Adafruit_GFX.h>
+#include <Fonts/Picopixel.h>
+#include <Fonts/TomThumb.h>
 #include "TinyDigit.h"
+#include "Mirrored_LEDBackpack.h"
 
 //uncomment the line below if you would like to have debug messages
 //#define SERIAL_DEBUG_ENABLED 1
+
+//uncomment the line below if you would like to use MAX7219 LED matrix
+//#define SERIAL_MAX7219_ENABLED 1
 
 #define LED_VERT_OFFSET 2
 #define LED_HOR_OFFSET 1
@@ -118,17 +127,17 @@ unsigned long bounce_delay_Reed_Switch = 5; //The delay to filter bouncing
 unsigned int bin_counter = 0; //binary counter for reed switch
 int virtual_Reed_Switch = VIRT_REED_SWITCH_OFF; // virtual switch
 
-//State Machine Variables - "Volt Meter"
+//SM "Volt Meter" variables
 int state_Volt_Meter = 0;
 unsigned long t_Volt_Meter = 0;
 unsigned long t_0_Volt_Meter = 0;
-unsigned long delay_Between_2_Measures = 200;
+unsigned long delay_Between_2_Measures = 300;
 
 //Display variables
 int state_display1 = 0;                   //The actual ~state~ of the state machine
 int state_prev_display1 = 0;              //Remembers the previous state (useful to know when the state has changed)
 
-//Counter variables
+//SM Counter variables
 int state_counter1 = 0;                   //The actual ~state~ of the state machine
 int prev_state_counter1 = 0;              //Remembers the previous state (useful to know when the state has changed)
 int iSecCounter1 = -1;
@@ -138,17 +147,17 @@ int prev_iMinCounter1 = 0;
 unsigned long start_counter1 = 0;
 unsigned long elapsed_counter1 = 0;
 
-//LED Variables (Variables similar to those above)
-int state_led1 = 0;
-int state_prev_led1 = 0;
-int pin_led1 = LED_BUILTIN;
-int val_led1 = 0;
-unsigned long t_led1 = 0;
-unsigned long t_0_led1 = 0;
-unsigned long on_delay_led1 = 500;
-unsigned long off_delay_led1 = 500;
-int beep_count_led1 = 0;
-int beep_number_led1 = 2;
+//SM Status LED Variables
+int state_Status_Led = 0;
+int state_prev_Status_Led = 0;
+int pin_Status_Led = LED_BUILTIN;
+int val_Status_Led = 0;
+unsigned long t_Status_Led = 0;
+unsigned long t_0_Status_Led = 0;
+unsigned long on_delay_Status_Led = 500;
+unsigned long off_delay_Status_Led = 500;
+int beep_count_Status_Led = 0;
+int beep_number_Status_Led = 2;
 
 // Setup MAX7219 LED Matrix
 // pin 12 is connected to the DataIn on the display
@@ -183,12 +192,19 @@ float calc_Temperature_V2 = 0.0;
 char temperature_String_V2[] = "  999.9";
 float thermistor_Res = 0.00; // Thermistor calculated resistance
 
+//HT16K33 LED Matrix display
+//Define lpaseen library class
+HT16K33 HT;
+//Define Adafruit library class
+//Adafruit_8x16minimatrix matrix = Adafruit_8x16minimatrix();
+Adafruit_X_Mirrored_8x16minimatrix matrix = Adafruit_X_Mirrored_8x16minimatrix();
+
 /* Function declarations */
 
 void StateMachine_counter1();
 void StateMachine_Manual_Switch();
 void StateMachine_Reed_Switch();
-void StateMachine_led1();
+void StateMachine_Status_Led();
 void StateMachine_Volt_Meter();
 void clear_Display_Max7219();
 void bright_Display_Max7219(int dnum2disp);
@@ -210,24 +226,30 @@ void ina219_Init(void);
 void get_Voltage(void);
 void calculate_Temperature_V2(void);
 
+void Ht16k33_Led_Matrix_Init(void);
+void Adafruit_Text_Display_Test(void);
+
 /* Functions */
 
 void setup() {
   //if DEBUG is turned on, intialize serial connection
-  // debug display
-  #ifdef SERIAL_DEBUG_ENABLED
   Serial.begin(115200);
+  #ifdef SERIAL_DEBUG_ENABLED
   Serial.println(F("Debugging is ON"));
   #endif
   Gpio_Init();
+  #ifdef SERIAL_MAX7219_ENABLED
   Max7219_Led_Matrix_Init();
+  #endif
   Ssd1306_Oled_Init();
   ina219_Init();
-    
+  Ht16k33_Led_Matrix_Init();
   // SM inits
   StateMachine_counter1();
   StateMachine_Reed_Switch();
   StateMachine_Volt_Meter();
+
+  Adafruit_Text_Display_Test();
   
 }
 
@@ -238,13 +260,13 @@ void loop() {
   //Provide events that can force the state machines to change state
   switch (virtual_Reed_Switch) {
     case VIRT_REED_SWITCH_OFF:
-      digitalWrite(pin_led1, LOW);
+      digitalWrite(pin_Status_Led, LOW);
       if (state_counter1 == COUNTER_STATE_COUNTING) {
         state_counter1 = COUNTER_STATE_STOP;
       }
       break;
     case VIRT_REED_SWITCH_ON:
-      digitalWrite(pin_led1, HIGH);
+      digitalWrite(pin_Status_Led, HIGH);
       if (state_counter1 == COUNTER_STATE_DISABLED) {
         state_counter1 = COUNTER_STATE_START;
       }
@@ -391,7 +413,7 @@ void StateMachine_Manual_Switch() {
 * @brief Reed switch state machine, extended with a logic switch which handles the 50Hz switching of reed switch on the solenoid
 */
 void StateMachine_Reed_Switch() {
-
+  int prev_virtual_Reed_Switch;
   //State Machine Section
   switch (state_Reed_Switch) {
     case REED_SWITCH_STATE_RESET: //RESET!
@@ -429,20 +451,26 @@ void StateMachine_Reed_Switch() {
       break;
 
     case REED_SWITCH_STATE_SET_LOGIC_SWITCH:
+      prev_virtual_Reed_Switch=virtual_Reed_Switch;
       if (bin_counter > 0) {
-        virtual_Reed_Switch = VIRT_REED_SWITCH_ON;
-        // debug display
-        #ifdef SERIAL_DEBUG_ENABLED
-        Serial.println(F("SM-Reed_Switch: logic switch set ON"));
-        #endif
+        if (prev_virtual_Reed_Switch == VIRT_REED_SWITCH_OFF) {
+          virtual_Reed_Switch = VIRT_REED_SWITCH_ON;
+          // debug display
+          #ifdef SERIAL_DEBUG_ENABLED
+          Serial.println(F("Virtual Reed switch ON"));
+          #endif
+        }
+        
       }
       else
       {
-        virtual_Reed_Switch = VIRT_REED_SWITCH_OFF;
-        // debug display
-        #ifdef SERIAL_DEBUG_ENABLED
-        Serial.println(F("SM-Reed_Switch: logic switch set OFF"));
-        #endif        
+        if (prev_virtual_Reed_Switch == VIRT_REED_SWITCH_ON) {
+          virtual_Reed_Switch = VIRT_REED_SWITCH_OFF;
+          // debug display
+          #ifdef SERIAL_DEBUG_ENABLED
+          Serial.println(F("Virtual Reed switch OFF"));
+          #endif
+        }
       }
       state_Reed_Switch = REED_SWITCH_STATE_START_TIMER;
 
@@ -455,54 +483,54 @@ void StateMachine_Reed_Switch() {
 /**
 * @brief LED-1 state machine
 */
-void StateMachine_led1() {
+void StateMachine_Status_Led() {
   //Common code for every state
-  state_prev_led1 = state_led1;
+  state_prev_Status_Led = state_Status_Led;
   //State Machine Section
-  switch (state_led1) {
+  switch (state_Status_Led) {
     case 0: //RESET
       //Set Beep Count to 0 then proceed to WAIT
-      beep_count_led1 = 0;
-      state_led1 = 1;
+      beep_count_Status_Led = 0;
+      state_Status_Led = 1;
       break;
     case 1: //WAIT
       //Do nothing.  Only the top level loop can force us out of this state into state 2 "TURN ON"
       break;
 
     case 2: //TURNING ON
-      digitalWrite(pin_led1, HIGH);
+      digitalWrite(pin_Status_Led, HIGH);
       // debug display
       #ifdef SERIAL_DEBUG_ENABLED
       Serial.println(F(":: LED ON"));
       #endif
-      t_0_led1 = millis();
-      state_led1 = 3;
+      t_0_Status_Led = millis();
+      state_Status_Led = 3;
       break;
     case 3: //ON
       //Wait for time to elapse, then proceed to TURN OFF
-      t_led1 = millis();
-      if (t_led1 - t_0_led1 > on_delay_led1) {
-        state_led1 = 4;
+      t_Status_Led = millis();
+      if (t_Status_Led - t_0_Status_Led > on_delay_Status_Led) {
+        state_Status_Led = 4;
       }
       break;
     case 4: //TURNING OFF
       //Increment the beep counter, proceed to OFF
-      beep_count_led1++;
-      t_0_led1 = millis();
-      digitalWrite(pin_led1, LOW);
+      beep_count_Status_Led++;
+      t_0_Status_Led = millis();
+      digitalWrite(pin_Status_Led, LOW);
       // debug display
       #ifdef SERIAL_DEBUG_ENABLED
       Serial.println(F(":: LED off"));
       #endif
-      state_led1 = 5;
+      state_Status_Led = 5;
       break;
     case 5: //OFF
-      t_led1 = millis();
-      if (t_led1 - t_0_led1 > off_delay_led1) {
-        state_led1 = 2;
+      t_Status_Led = millis();
+      if (t_Status_Led - t_0_Status_Led > off_delay_Status_Led) {
+        state_Status_Led = 2;
       }
-      if (beep_count_led1 >= beep_number_led1) {
-        state_led1 = 0;
+      if (beep_count_Status_Led >= beep_number_Status_Led) {
+        state_Status_Led = 0;
       }
       break;
   }
@@ -660,7 +688,7 @@ void display_on_oled(int dispMinutes, int dispSeconds) {
 void Gpio_Init(void) {
   pinMode(pin_Manual_Switch, INPUT_PULLUP); //INPUT => reverse logic!
   pinMode(pin_Reed_Switch, INPUT_PULLUP); //INPUT => reverse logic!
-  pinMode(pin_led1, OUTPUT);
+  pinMode(pin_Status_Led, OUTPUT);
 }
 
 void Ssd1306_Oled_Init(void) {
@@ -692,7 +720,9 @@ void Max7219_Led_Matrix_Init(void) {
 }
 
 void display_Timer_On_All(boolean need_Display_Clear,boolean need_Display_Stopped) {
+  #ifdef SERIAL_MAX7219_ENABLED
   display_Timer_On_Max7219(need_Display_Clear,need_Display_Stopped);
+  #endif
   display_Timer_On_Ssd1306(need_Display_Clear,need_Display_Stopped);
 }
 
@@ -721,10 +751,10 @@ void display_Timer_On_Max7219(boolean need_Display_Clear,boolean need_Display_St
 
 void ina219_Init(void)
 {
-  pinMode(INA219_GND_PIN, OUTPUT);
-  pinMode(INA219_VCC_PIN, OUTPUT);
-  digitalWrite(INA219_GND_PIN, LOW);
-  digitalWrite(INA219_VCC_PIN, HIGH);
+  //pinMode(INA219_GND_PIN, OUTPUT);
+  //pinMode(INA219_VCC_PIN, OUTPUT);
+  //digitalWrite(INA219_GND_PIN, LOW);
+  //digitalWrite(INA219_VCC_PIN, HIGH);
   delay(100);
   ina219_monitor.begin();
 }
@@ -788,4 +818,55 @@ void StateMachine_Volt_Meter(void) {
       state_Volt_Meter = VOLT_METER_STATE_START_TIMER;
       break;
   } 
+}
+
+void Ht16k33_Led_Matrix_Init(void) {
+  HT.begin(0x70);
+  HT.setBrightness(1);
+  HT.clearAll();
+  matrix.begin(0x70);
+  matrix.setFont(&Picopixel);
+}
+
+void Adafruit_Text_Display_Test(void) {
+  //int8_t x,y;
+  matrix.setTextSize(1);
+  matrix.setTextWrap(false);
+  /**
+  Serial.println(F("rotation=0"));
+  matrix.setRotation(0);
+  matrix.setTextColor(LED_ON);
+  matrix.clear();
+  matrix.setCursor(0,0);
+  matrix.print("123");
+  matrix.writeDisplay();
+  delay(5000);
+  */
+  Serial.println(F("rotation=1"));
+  matrix.setRotation(1);
+  matrix.setTextColor(LED_ON);
+  matrix.clear();
+  matrix.setCursor(0,7);
+  matrix.print("0:00");
+  matrix.writeDisplay();
+  delay(5000);
+  matrix.clear();
+  matrix.setCursor(0,7);
+  matrix.print("1:00");
+  matrix.writeDisplay();
+  delay(5000);
+  matrix.clear();
+  matrix.setCursor(0,7);
+  matrix.print("100.0*");
+  matrix.writeDisplay();
+  delay(5000);
+  for(int i=50;i<120;i++) {
+    matrix.clear();
+    matrix.setCursor(0,7);
+    matrix.print(i);
+    matrix.writeDisplay();
+    delay(200);    
+  }
+  matrix.setRotation(0);
+  
 }

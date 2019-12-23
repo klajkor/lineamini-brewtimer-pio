@@ -80,6 +80,17 @@
 #define VOLT_METER_STATE_READ_VOLTAGE 3
 #define VOLT_METER_STATE_CONVERT_TO_TEMPERATURE 4
 
+#define DISPLAY_STATE_RESET 0
+#define DISPLAY_STATE_TIMER_RUNNING 1
+#define DISPLAY_STATE_TIMER_STOPPED 2
+#define DISPLAY_STATE_HOLD_TIMER_ON 3
+#define DISPLAY_STATE_TEMPERATURE 4
+#define DISPLAY_STATE_DO_NOTHING 5
+
+#define HT16K33_NORMAL_BRIGHTNESS 8
+#define HT16K33_TEMPERATURE_BRIGHTNESS 4
+#define HT16K33_DIMMED_BRIGHTNESS 1
+
 // Thermistor calculation values
 // Original idea and code from Jimmy Roasts, https://github.com/JimmyRoasts/LaMarzoccoTempSensor
 
@@ -87,7 +98,7 @@
 #define THERMISTORNOMINAL_V1 50000  // version 1
 #define THERMISTORNOMINAL_V2 49120  // version 2 updated calculation
 // temp. for nominal resistance (almost always 25 C)
-#define TEMPERATURENOMINAL 25   
+#define TEMPERATURENOMINAL 25
 // how many samples to take and average, more takes longer
 // but is more 'smooth'
 #define NUMSAMPLES 100
@@ -133,9 +144,12 @@ unsigned long t_Volt_Meter = 0;
 unsigned long t_0_Volt_Meter = 0;
 unsigned long delay_Between_2_Measures = 300;
 
-//Display variables
-int state_display1 = 0;                   //The actual ~state~ of the state machine
-int state_prev_display1 = 0;              //Remembers the previous state (useful to know when the state has changed)
+//SM Display variables
+int state_Display = 0;
+unsigned long t_Display = 0;
+unsigned long t_0_Display = 0;
+unsigned long delay_For_Stopped_Timer = 5000;  //millisec
+
 
 //SM Counter variables
 int state_counter1 = 0;                   //The actual ~state~ of the state machine
@@ -154,8 +168,8 @@ int pin_Status_Led = LED_BUILTIN;
 int val_Status_Led = 0;
 unsigned long t_Status_Led = 0;
 unsigned long t_0_Status_Led = 0;
-unsigned long on_delay_Status_Led = 500;
-unsigned long off_delay_Status_Led = 500;
+unsigned long on_delay_Status_Led = 100;
+unsigned long off_delay_Status_Led = 100;
 int beep_count_Status_Led = 0;
 int beep_number_Status_Led = 2;
 
@@ -189,7 +203,8 @@ float calc_Temperature_V1 = 0.0;
 char temperature_String_V1[] = "  999.9";
 float steinhart = 0.0;
 float calc_Temperature_V2 = 0.0;
-char temperature_String_V2[] = "  999.9";
+char temperature_String_V2[] = "999.9";
+char temperature_String_V2_Led_Matrix[] = "999.9";
 float thermistor_Res = 0.00; // Thermistor calculated resistance
 
 //HT16K33 LED Matrix display
@@ -197,23 +212,24 @@ float thermistor_Res = 0.00; // Thermistor calculated resistance
 HT16K33 HT;
 //Define Adafruit library class
 //Adafruit_8x16minimatrix matrix = Adafruit_8x16minimatrix();
-Adafruit_X_Mirrored_8x16minimatrix matrix = Adafruit_X_Mirrored_8x16minimatrix();
+Adafruit_Y_Mirrored_8x16minimatrix matrix = Adafruit_Y_Mirrored_8x16minimatrix();
 
 /* Function declarations */
 
-void StateMachine_counter1();
-void StateMachine_Manual_Switch();
-void StateMachine_Reed_Switch();
-void StateMachine_Status_Led();
-void StateMachine_Volt_Meter();
-void clear_Display_Max7219();
+void StateMachine_counter1(void);
+void StateMachine_Manual_Switch(void);
+void StateMachine_Reed_Switch(void);
+void StateMachine_Status_Led(void);
+void StateMachine_Volt_Meter(void);
+void StateMachine_Display(void);
+
+void clear_Display_Max7219(void);
 void bright_Display_Max7219(int dnum2disp);
 void dimm_Display_Max7219(int dnum2disp);
 void disp2digit_on_5x7(int d_address, int num2disp, int d_intensity);
 void puttinydigit3x5l(int address, byte x, byte y, char c);
 void disp_MinsAsColumn(int dispMinutes, byte dispCol);
 void update_TimeCounterStr(int tMinutes, int tSeconds);
-void display_on_oled(int dispMinutes, int dispSeconds);
 
 void Gpio_Init(void);
 void Ssd1306_Oled_Init(void);
@@ -221,6 +237,9 @@ void Max7219_Led_Matrix_Init(void);
 void display_Timer_On_All(boolean need_Display_Clear,boolean need_Display_Stopped);
 void display_Timer_On_Ssd1306(boolean need_Display_Clear,boolean need_Display_Stopped);
 void display_Timer_On_Max7219(boolean need_Display_Clear,boolean need_Display_Stopped);
+void display_Timer_On_Ht16k33(boolean need_Display_Clear,boolean need_Display_Stopped);
+void display_Temperature_On_Ssd1306(void);
+void display_Temperature_On_Ht16k33(void);
 
 void ina219_Init(void);
 void get_Voltage(void);
@@ -228,6 +247,11 @@ void calculate_Temperature_V2(void);
 
 void Ht16k33_Led_Matrix_Init(void);
 void Adafruit_Text_Display_Test(void);
+
+void Display_Running_Timer(void);
+void Display_Stopped_Timer(void);
+void Display_Temperature(void);
+
 
 /* Functions */
 
@@ -248,9 +272,10 @@ void setup() {
   StateMachine_counter1();
   StateMachine_Reed_Switch();
   StateMachine_Volt_Meter();
+  StateMachine_Display();
 
-  Adafruit_Text_Display_Test();
-  
+  //Adafruit_Text_Display_Test();
+
 }
 
 void loop() {
@@ -275,13 +300,14 @@ void loop() {
   }
   StateMachine_counter1();
   StateMachine_Volt_Meter();
+  StateMachine_Display();
 
 }
 
 /**
 * @brief Counter 1 state machine - counts the seconds
 */
-void StateMachine_counter1() {
+void StateMachine_counter1(void) {
 
   prev_state_counter1 = state_counter1;
 
@@ -302,7 +328,7 @@ void StateMachine_counter1() {
       elapsed_counter1 = 0;
       start_counter1 = millis();
       state_counter1 = COUNTER_STATE_COUNTING;
-      display_Timer_On_All(DISPLAY_CLEAR_TRUE,DISPLAY_STOPPED_FALSE);
+      state_Display = DISPLAY_STATE_TIMER_RUNNING;      
       break;
     case COUNTER_STATE_COUNTING:
       prev_iSecCounter1 = iSecCounter1;
@@ -316,13 +342,13 @@ void StateMachine_counter1() {
         Serial.print(iMinCounter1, DEC);
         Serial.print(F(" iSecCounter1: "));
         Serial.println(iSecCounter1, DEC);
-        #endif        
-        display_Timer_On_All(DISPLAY_CLEAR_FALSE,DISPLAY_STOPPED_FALSE);
+        #endif
+        state_Display = DISPLAY_STATE_TIMER_RUNNING;        
       }
       break;
     case COUNTER_STATE_STOP:
       state_counter1 = COUNTER_STATE_DISABLED;
-      display_Timer_On_All(DISPLAY_CLEAR_FALSE,DISPLAY_STOPPED_TRUE);
+      state_Display = DISPLAY_STATE_TIMER_STOPPED;      
       break;
   }
   if (prev_state_counter1 == state_counter1)
@@ -343,7 +369,7 @@ void StateMachine_counter1() {
 /**
 * @brief Manual switch state machine
 */
-void StateMachine_Manual_Switch() {
+void StateMachine_Manual_Switch(void) {
 
   //Common code for every state
   value_Manual_Switch = digitalRead(pin_Manual_Switch);
@@ -412,7 +438,7 @@ void StateMachine_Manual_Switch() {
 /**
 * @brief Reed switch state machine, extended with a logic switch which handles the 50Hz switching of reed switch on the solenoid
 */
-void StateMachine_Reed_Switch() {
+void StateMachine_Reed_Switch(void) {
   int prev_virtual_Reed_Switch;
   //State Machine Section
   switch (state_Reed_Switch) {
@@ -460,7 +486,7 @@ void StateMachine_Reed_Switch() {
           Serial.println(F("Virtual Reed switch ON"));
           #endif
         }
-        
+
       }
       else
       {
@@ -483,7 +509,7 @@ void StateMachine_Reed_Switch() {
 /**
 * @brief LED-1 state machine
 */
-void StateMachine_Status_Led() {
+void StateMachine_Status_Led(void) {
   //Common code for every state
   state_prev_Status_Led = state_Status_Led;
   //State Machine Section
@@ -539,12 +565,12 @@ void StateMachine_Status_Led() {
 
 /**
 * @brief Clears the dot matrix display(s)
-*/ 
-void clear_Display_Max7219() {
+*/
+void clear_Display_Max7219(void) {
   int devices = lc.getDeviceCount();
   for (byte address = 0; address < devices; address++) {
     lc.clearDisplay(address);
-  }  
+  }
 }
 
 /**
@@ -573,9 +599,9 @@ void dimm_Display_Max7219(int dnum2disp) {
   #endif
 }
 
-/** 
+/**
 * @brief Displays a 2 digits number in landscape mode on a 5x7 matrix
-* 
+*
 * @param d_address : address of the LED matrix display
 * @param num2disp : number to display
 * @param d_intensity : LED intensity (=brightness) level
@@ -591,9 +617,9 @@ void disp2digit_on_5x7(int d_address, int num2disp, int d_intensity) {
 
 }
 
-/** 
+/**
 * @brief Display tiny 3x5 digit in landscape mode on a 5x7 matrix
-* 
+*
 * @param address : address of the LED matrix display
 * @param x : X coordinate
 * @param y : no Y coordinate can be set! (permanently zeroed currently)
@@ -665,24 +691,12 @@ void disp_MinsAsColumn(int dispMinutes, byte dispCol) {
 * @brief Converts the minutes and seconds to char and updates the TimeCounterStr string
 * @param tMinutes : minutes value
 * @param tSeconds : seconds value
-*/ 
+*/
 void update_TimeCounterStr(int tMinutes, int tSeconds) {
   TimeCounterStr[0] = (char) ((tMinutes / 10)+0x30);
   TimeCounterStr[1] = (char) ((tMinutes % 10)+0x30);
   TimeCounterStr[3] = (char) ((tSeconds / 10)+0x30);
   TimeCounterStr[4] = (char) ((tSeconds % 10)+0x30);
-}
-
-/**
-* @brief Dsiplays the TimeCounterStr string on the OLED screen, format: MM:SS
-* @param dispMinutes : minutes value
-* @param dispSeconds : seconds value
-*/ 
-void display_on_oled(int dispMinutes, int dispSeconds) {
-  update_TimeCounterStr(dispMinutes,dispSeconds);
-  oled_display.setCol(0);
-  oled_display.setRow(0);
-  oled_display.println(TimeCounterStr);  
 }
 
 void Gpio_Init(void) {
@@ -697,10 +711,10 @@ void Ssd1306_Oled_Init(void) {
   oled_display.clear();
   oled_display.setFont(fixed_bold10x15);
   oled_display.setRow(0);
+  oled_display.println(F("Linea Mini "));
   oled_display.println(F("Brew Timer "));
   delay(1500);
   oled_display.clear();
-  display_on_oled(0,0);
 }
 
 void Max7219_Led_Matrix_Init(void) {
@@ -723,17 +737,29 @@ void display_Timer_On_All(boolean need_Display_Clear,boolean need_Display_Stoppe
   #ifdef SERIAL_MAX7219_ENABLED
   display_Timer_On_Max7219(need_Display_Clear,need_Display_Stopped);
   #endif
+  update_TimeCounterStr(iMinCounter1,iSecCounter1);
   display_Timer_On_Ssd1306(need_Display_Clear,need_Display_Stopped);
+  display_Timer_On_Ht16k33(need_Display_Clear,need_Display_Stopped);
 }
 
+/**
+* @brief Updates and then displays the TimeCounterStr string on the OLED screen, format: MM:SS
+* @param need_Display_Clear : is display clear needed?
+* @param need_Display_Stopped : is visualisation of sopped timer needed?
+*/
 void display_Timer_On_Ssd1306(boolean need_Display_Clear,boolean need_Display_Stopped) {
   if(need_Display_Clear) {
     oled_display.clear();
   }
-  display_on_oled(iMinCounter1,iSecCounter1);
+  oled_display.setCol(0);
+  oled_display.setRow(0);
+  oled_display.print(TimeCounterStr);
   if(need_Display_Stopped) {
-    oled_display.print(F("stopped"));
-  }          
+    oled_display.print(F(" stop"));
+  }
+  else {
+    oled_display.print(F("     "));
+  }
 }
 
 void display_Timer_On_Max7219(boolean need_Display_Clear,boolean need_Display_Stopped) {
@@ -746,7 +772,7 @@ void display_Timer_On_Max7219(boolean need_Display_Clear,boolean need_Display_St
   else {
     bright_Display_Max7219(iSecCounter1);
   }
-  disp_MinsAsColumn(iMinCounter1,3);
+  //disp_MinsAsColumn(iMinCounter1,3);
 }
 
 void ina219_Init(void)
@@ -781,7 +807,8 @@ void calculate_Temperature_V2(void) {
   steinhart += (1.0 / (TEMPERATURENOMINAL + 273.15)); // + (1/To)
   steinhart = 1.0 / steinhart;                 // Invert
   calc_Temperature_V2 = (float) steinhart - 273.15;                         // convert to C
-  dtostrf(calc_Temperature_V2, 7, 1, temperature_String_V2);
+  dtostrf(calc_Temperature_V2, 5, 1, temperature_String_V2);
+  dtostrf(calc_Temperature_V2, 5, 1, temperature_String_V2_Led_Matrix);
   // debug display
   #ifdef SERIAL_DEBUG_ENABLED
   Serial.print(temperature_String_V1);
@@ -790,7 +817,7 @@ void calculate_Temperature_V2(void) {
 }
 
 void StateMachine_Volt_Meter(void) {
-  
+
   switch (state_Volt_Meter) {
     case VOLT_METER_STATE_RESET:
       state_Volt_Meter = VOLT_METER_STATE_START_TIMER;
@@ -816,8 +843,11 @@ void StateMachine_Volt_Meter(void) {
     case VOLT_METER_STATE_CONVERT_TO_TEMPERATURE:
       calculate_Temperature_V2();
       state_Volt_Meter = VOLT_METER_STATE_START_TIMER;
+      if (state_counter1 == COUNTER_STATE_DISABLED && state_Display != DISPLAY_STATE_HOLD_TIMER_ON) {
+        state_Display = DISPLAY_STATE_TEMPERATURE;
+      }
       break;
-  } 
+  }
 }
 
 void Ht16k33_Led_Matrix_Init(void) {
@@ -847,14 +877,18 @@ void Adafruit_Text_Display_Test(void) {
   matrix.setTextColor(LED_ON);
   matrix.clear();
   matrix.setCursor(0,7);
-  matrix.print("0:00");
+  matrix.print("0:12");
   matrix.writeDisplay();
   delay(5000);
+  Serial.println(F("rotation=3"));
+  matrix.setRotation(3);
   matrix.clear();
   matrix.setCursor(0,7);
   matrix.print("1:00");
   matrix.writeDisplay();
   delay(5000);
+  Serial.println(F("rotation=1"));
+  matrix.setRotation(1);
   matrix.clear();
   matrix.setCursor(0,7);
   matrix.print("100.0*");
@@ -865,8 +899,95 @@ void Adafruit_Text_Display_Test(void) {
     matrix.setCursor(0,7);
     matrix.print(i);
     matrix.writeDisplay();
-    delay(200);    
+    delay(200);
   }
   matrix.setRotation(0);
-  
+
+}
+
+void StateMachine_Display(void) {
+
+  switch (state_Display) {
+    case DISPLAY_STATE_RESET:
+      Display_Stopped_Timer();      
+      state_Display = DISPLAY_STATE_DO_NOTHING;
+      break;
+
+    case DISPLAY_STATE_TIMER_RUNNING:
+      Display_Running_Timer();
+      display_Temperature_On_Ssd1306();
+      state_Display = DISPLAY_STATE_DO_NOTHING;
+      break;
+
+    case DISPLAY_STATE_TIMER_STOPPED:
+      Display_Stopped_Timer();
+      t_0_Display = millis();
+      state_Display = DISPLAY_STATE_HOLD_TIMER_ON;      
+      break;
+
+    case DISPLAY_STATE_HOLD_TIMER_ON:
+      t_Display = millis();
+      if (t_Display - t_0_Display > delay_For_Stopped_Timer) {
+        state_Display = DISPLAY_STATE_TEMPERATURE;
+      }
+      break;
+
+    case DISPLAY_STATE_TEMPERATURE:
+      Display_Temperature();
+      state_Display = DISPLAY_STATE_DO_NOTHING;
+      break;
+
+    case DISPLAY_STATE_DO_NOTHING:
+      break;
+  }
+}
+
+void Display_Running_Timer(void) {
+  display_Timer_On_All(DISPLAY_CLEAR_FALSE,DISPLAY_STOPPED_FALSE);
+}
+
+void Display_Stopped_Timer(void) {
+  display_Timer_On_All(DISPLAY_CLEAR_FALSE,DISPLAY_STOPPED_TRUE);
+}
+
+void Display_Temperature(void) {
+  display_Temperature_On_Ssd1306();
+  display_Temperature_On_Ht16k33();
+}
+
+void display_Temperature_On_Ssd1306() {
+  oled_display.setCol(0);
+  oled_display.setRow(2);
+  oled_display.print(temperature_String_V2);
+  oled_display.print(F(" *C"));
+}
+
+void display_Timer_On_Ht16k33(boolean need_Display_Clear,boolean need_Display_Stopped) {
+  char *tempPointer;
+  matrix.setRotation(1);
+  matrix.setTextColor(LED_ON);
+  matrix.clear();
+  if(need_Display_Stopped) {
+    HT.setBrightness(HT16K33_DIMMED_BRIGHTNESS);
+  }
+  else {
+    HT.setBrightness(HT16K33_NORMAL_BRIGHTNESS);
+  }
+  matrix.setCursor(1,5);
+  tempPointer=&TimeCounterStr[1];
+  matrix.print(tempPointer);
+  //HT.setLedNow((iSecCounter1 % 15)*8+7);
+  matrix.setCursor((iSecCounter1 % 15),7);
+  matrix.print(".");
+  matrix.writeDisplay();
+}
+
+void display_Temperature_On_Ht16k33() {
+  matrix.setRotation(1);
+  matrix.setTextColor(LED_ON);
+  matrix.clear();
+  matrix.setCursor(0,5);
+  HT.setBrightness(HT16K33_TEMPERATURE_BRIGHTNESS);
+  matrix.print(temperature_String_V2_Led_Matrix);
+  matrix.writeDisplay();
 }

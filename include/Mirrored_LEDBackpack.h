@@ -29,9 +29,9 @@ class Adafruit_X_Mirrored_8x8matrix: public Adafruit_LEDBackpack, public Adafrui
 
 };
 
-class Adafruit_X_Mirrored_8x16minimatrix : public Adafruit_LEDBackpack, public Adafruit_GFX {
+class Adafruit_Y_Mirrored_8x16minimatrix : public Adafruit_LEDBackpack, public Adafruit_GFX {
  public:
-  Adafruit_X_Mirrored_8x16minimatrix(void);
+  Adafruit_Y_Mirrored_8x16minimatrix(void);
 
   void drawPixel(int16_t x, int16_t y, uint16_t color);
 

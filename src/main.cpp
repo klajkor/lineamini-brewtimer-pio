@@ -8,15 +8,17 @@
 * Board: Arduino Pro Mini/Nano
 *
 * Extension modules and hw used:
-*  - SSD1306 OLED dsiplay, I2C
-*  - MAX7219 LED display driver, I2C
-*  - 3x5 digits on 5x7 dot matrix
+*  - SSD1306 OLED display, I2C
+*  - MAX7219 LED matrix display, I2C - optional, please see source code for feature switch (MAX7219_ENABLED)
+*  - 5x7 dot matrix displaying 3x5 digits (controlled by MAX7219)
+*  - Holtek HT16K33 LED matrix display, I2C - optional, please see source code for feature switch (HT16K33_ENABLED)
 *  - reed switch, sensing magnet valve sc
 *  - INA219, I2C
 * Libraries used:
 *  - SSD1306Ascii by Bill Greiman - Copyright (c) 2019, Bill Greiman
 *  - LedControl by wayoda - Copyright (c) 2012, Eberhard Fahle
 *  - Adafruit INA219 by Adafruit - Copyright (c) 2012, Adafruit Industries
+*  - HT16K33 - Copyright (c) 2017, lpaseen, Peter Sjoberg <peters-alib AT techwiz.ca>
 *
 * BSD license, all text here must be included in any redistribution.
 *
@@ -46,6 +48,7 @@
 
 //uncomment the line below if you would like to use HT16K33 LED matrix
 //#define HT16K33_ENABLED 1
+
 
 #define LED_VERT_OFFSET 2
 #define LED_HOR_OFFSET 1
@@ -214,7 +217,9 @@ float thermistor_Res = 0.00; // Thermistor calculated resistance
 
 //HT16K33 LED Matrix display
 //Define lpaseen library class
+#ifdef HT16K33_ENABLED
 HT16K33 HT;
+#endif
 
 //Define Adafruit library class
 //Adafruit_8x16minimatrix matrix = Adafruit_8x16minimatrix();
@@ -273,7 +278,9 @@ void setup() {
   #endif
   Ssd1306_Oled_Init();
   ina219_Init();
+  #ifdef HT16K33_ENABLED
   Ht16k33_Led_Matrix_Init();
+  #endif
   // SM inits
   StateMachine_counter1();
   StateMachine_Reed_Switch();
@@ -758,12 +765,14 @@ void Ssd1306_Oled_Init(void) {
 
 
 void display_Timer_On_All(boolean need_Display_Clear,boolean need_Display_Stopped) {
+  update_TimeCounterStr(iMinCounter1,iSecCounter1);
   #ifdef MAX7219_ENABLED
   display_Timer_On_Max7219(need_Display_Clear,need_Display_Stopped);
-  #endif
-  update_TimeCounterStr(iMinCounter1,iSecCounter1);
+  #endif  
   display_Timer_On_Ssd1306(need_Display_Clear,need_Display_Stopped);
+  #ifdef HT16K33_ENABLED
   display_Timer_On_Ht16k33(need_Display_Clear,need_Display_Stopped);
+  #endif
 }
 
 /**
@@ -862,6 +871,7 @@ void StateMachine_Volt_Meter(void) {
   }
 }
 
+#ifdef HT16K33_ENABLED
 void Ht16k33_Led_Matrix_Init(void) {
   HT.begin(0x70);
   HT.setBrightness(1);
@@ -869,6 +879,37 @@ void Ht16k33_Led_Matrix_Init(void) {
   matrix.begin(0x70);
   matrix.setFont(&Picopixel);
 }
+
+void display_Timer_On_Ht16k33(boolean need_Display_Clear,boolean need_Display_Stopped) {
+  char *tempPointer;
+  matrix.setRotation(1);
+  matrix.setTextColor(LED_ON);
+  matrix.clear();
+  if(need_Display_Stopped) {
+    HT.setBrightness(HT16K33_DIMMED_BRIGHTNESS);
+  }
+  else {
+    HT.setBrightness(HT16K33_NORMAL_BRIGHTNESS);
+  }
+  matrix.setCursor(1,5);
+  tempPointer=&TimeCounterStr[1];
+  matrix.print(tempPointer);
+  //HT.setLedNow((iSecCounter1 % 15)*8+7);
+  matrix.setCursor((iSecCounter1 % 15),7);
+  matrix.print(".");
+  matrix.writeDisplay();
+}
+
+void display_Temperature_On_Ht16k33() {
+  matrix.setRotation(1);
+  matrix.setTextColor(LED_ON);
+  matrix.clear();
+  matrix.setCursor(0,5);
+  HT.setBrightness(HT16K33_TEMPERATURE_BRIGHTNESS);
+  matrix.print(temperature_String_V2_Led_Matrix);
+  matrix.writeDisplay();
+}
+#endif // #ifdef HT16K33_ENABLED
 
 void Adafruit_Text_Display_Test(void) {
   //int8_t x,y;
@@ -964,7 +1005,9 @@ void Display_Stopped_Timer(void) {
 
 void Display_Temperature(void) {
   display_Temperature_On_Ssd1306();
+  #ifdef HT16K33_ENABLED
   display_Temperature_On_Ht16k33();
+  #endif
 }
 
 void display_Temperature_On_Ssd1306() {
@@ -972,34 +1015,4 @@ void display_Temperature_On_Ssd1306() {
   oled_display.setRow(2);
   oled_display.print(temperature_String_V2);
   oled_display.print(F(" *C"));
-}
-
-void display_Timer_On_Ht16k33(boolean need_Display_Clear,boolean need_Display_Stopped) {
-  char *tempPointer;
-  matrix.setRotation(1);
-  matrix.setTextColor(LED_ON);
-  matrix.clear();
-  if(need_Display_Stopped) {
-    HT.setBrightness(HT16K33_DIMMED_BRIGHTNESS);
-  }
-  else {
-    HT.setBrightness(HT16K33_NORMAL_BRIGHTNESS);
-  }
-  matrix.setCursor(1,5);
-  tempPointer=&TimeCounterStr[1];
-  matrix.print(tempPointer);
-  //HT.setLedNow((iSecCounter1 % 15)*8+7);
-  matrix.setCursor((iSecCounter1 % 15),7);
-  matrix.print(".");
-  matrix.writeDisplay();
-}
-
-void display_Temperature_On_Ht16k33() {
-  matrix.setRotation(1);
-  matrix.setTextColor(LED_ON);
-  matrix.clear();
-  matrix.setCursor(0,5);
-  HT.setBrightness(HT16K33_TEMPERATURE_BRIGHTNESS);
-  matrix.print(temperature_String_V2_Led_Matrix);
-  matrix.writeDisplay();
 }

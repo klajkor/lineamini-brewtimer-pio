@@ -177,10 +177,12 @@ int beep_number_Status_Led = 2;
 // pin 12 is connected to the DataIn on the display
 // pin 11 is connected to the CLK on the display
 // pin 10 is connected to LOAD on the display
+#ifdef SERIAL_MAX7219_ENABLED
 LedControl lc = LedControl(12, 11, 10, 1); //sets the 3 control pins as 12, 11 & 10 and then sets 1 display
 byte intensity = 1;
 byte bright_intensity = 8;
 byte dimm_intensity = 1;
+#endif
 
 char TimeCounterStr[] = "00:00"; /** String to store time counter value, format: MM:SS */
 

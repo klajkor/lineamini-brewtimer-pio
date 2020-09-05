@@ -2,10 +2,10 @@
 
 ### Board: Arduino Pro Mini / Nano
 
-### Extension modules used:
-- SSD1306 OLED dsiplay, I2C
-- MAX7219 LED display driver, I2C
-- 3x5 digits on 5x7 dot matrix
+### Extension modules and peripherials used:
+- SSD1306 OLED display, I2C
+- MAX7219 LED display, I2C - optional, please see source code for feature switxh (MAX7219_ENABLED)
+- 5x7 dot matrix displaying 3x5 digits (controlled by MAX7219)
 - reed switch, sensing magnet valve sc
 
 ### Libraries used:

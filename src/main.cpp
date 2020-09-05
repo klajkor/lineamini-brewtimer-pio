@@ -42,7 +42,10 @@
 //#define SERIAL_DEBUG_ENABLED 1
 
 //uncomment the line below if you would like to use MAX7219 LED matrix
-//#define SERIAL_MAX7219_ENABLED 1
+//#define MAX7219_ENABLED 1
+
+//uncomment the line below if you would like to use HT16K33 LED matrix
+//#define HT16K33_ENABLED 1
 
 #define LED_VERT_OFFSET 2
 #define LED_HOR_OFFSET 1
@@ -177,11 +180,11 @@ int beep_number_Status_Led = 2;
 // pin 12 is connected to the DataIn on the display
 // pin 11 is connected to the CLK on the display
 // pin 10 is connected to LOAD on the display
-#ifdef SERIAL_MAX7219_ENABLED
+#ifdef MAX7219_ENABLED
 LedControl lc = LedControl(12, 11, 10, 1); //sets the 3 control pins as 12, 11 & 10 and then sets 1 display
-byte intensity = 1;
-byte bright_intensity = 8;
-byte dimm_intensity = 1;
+byte Max7219_intensity = 1;
+byte Max7219_bright_intensity = 8;
+byte Max7219_dimm_intensity = 1;
 #endif
 
 char TimeCounterStr[] = "00:00"; /** String to store time counter value, format: MM:SS */
@@ -212,6 +215,7 @@ float thermistor_Res = 0.00; // Thermistor calculated resistance
 //HT16K33 LED Matrix display
 //Define lpaseen library class
 HT16K33 HT;
+
 //Define Adafruit library class
 //Adafruit_8x16minimatrix matrix = Adafruit_8x16minimatrix();
 Adafruit_Y_Mirrored_8x16minimatrix matrix = Adafruit_Y_Mirrored_8x16minimatrix();
@@ -230,7 +234,7 @@ void bright_Display_Max7219(int dnum2disp);
 void dimm_Display_Max7219(int dnum2disp);
 void disp2digit_on_5x7(int d_address, int num2disp, int d_intensity);
 void puttinydigit3x5l(int address, byte x, byte y, char c);
-void disp_MinsAsColumn(int dispMinutes, byte dispCol);
+void disp_MinsAsColumn_On_Max7219(int dispMinutes, byte dispCol);
 void update_TimeCounterStr(int tMinutes, int tSeconds);
 
 void Gpio_Init(void);
@@ -264,7 +268,7 @@ void setup() {
   Serial.println(F("Debugging is ON"));
   #endif
   Gpio_Init();
-  #ifdef SERIAL_MAX7219_ENABLED
+  #ifdef MAX7219_ENABLED
   Max7219_Led_Matrix_Init();
   #endif
   Ssd1306_Oled_Init();
@@ -565,6 +569,8 @@ void StateMachine_Status_Led(void) {
 
 }
 
+
+#ifdef MAX7219_ENABLED
 /**
 * @brief Clears the dot matrix display(s)
 */
@@ -576,11 +582,11 @@ void clear_Display_Max7219(void) {
 }
 
 /**
-* @brief Displays the number on the LED display with "bright_intensity" brightness
+* @brief Displays the number on the LED display with "MAX7219_bright_intensity" brightness
 * @param dnum2disp : number to display
 */
 void bright_Display_Max7219(int dnum2disp) {
-  disp2digit_on_5x7(0, dnum2disp, bright_intensity);
+  disp2digit_on_5x7(0, dnum2disp, Max7219_bright_intensity);
   // debug display
   #ifdef SERIAL_DEBUG_ENABLED
   Serial.print(F("Bright: "));
@@ -589,11 +595,11 @@ void bright_Display_Max7219(int dnum2disp) {
 }
 
 /**
-* @brief Displays the number on the LED display with "dimm_intensity" brightness
+* @brief Displays the number on the LED display with "Max7219_dimm_intensity" brightness
 * @param dnum2disp : number to display
 */
 void dimm_Display_Max7219(int dnum2disp) {
-  disp2digit_on_5x7(0, dnum2disp, dimm_intensity);
+  disp2digit_on_5x7(0, dnum2disp, Max7219_dimm_intensity);
   // debug display
   #ifdef SERIAL_DEBUG_ENABLED
   Serial.print(F("Dimm: "));
@@ -602,7 +608,7 @@ void dimm_Display_Max7219(int dnum2disp) {
 }
 
 /**
-* @brief Displays a 2 digits number in landscape mode on a 5x7 matrix
+* @brief Displays a 2 digits number in landscape mode on a MAX7219 5x7 matrix
 *
 * @param d_address : address of the LED matrix display
 * @param num2disp : number to display
@@ -620,7 +626,7 @@ void disp2digit_on_5x7(int d_address, int num2disp, int d_intensity) {
 }
 
 /**
-* @brief Display tiny 3x5 digit in landscape mode on a 5x7 matrix
+* @brief Display tiny 3x5 digit in landscape mode on a MAX7219 5x7 matrix
 *
 * @param address : address of the LED matrix display
 * @param x : X coordinate
@@ -641,7 +647,8 @@ void puttinydigit3x5l(int address, byte x, byte y, char c)
   }
 }
 
-void disp_MinsAsColumn(int dispMinutes, byte dispCol) {
+
+void disp_MinsAsColumn_On_Max7219(int dispMinutes, byte dispCol) {
   int address=0;
   byte columnBits;
   dispMinutes = dispMinutes % 10;
@@ -689,6 +696,36 @@ void disp_MinsAsColumn(int dispMinutes, byte dispCol) {
   lc.setRow(address,dispCol,columnBits);
 }
 
+void Max7219_Led_Matrix_Init(void) {
+  //we have already set the number of devices when we created the LedControl
+  int devices = lc.getDeviceCount();
+  //we have to init all devices in a loop
+  for (int address = 0; address < devices; address++) {
+    /*The MAX72XX is in power-saving mode on startup*/
+    lc.shutdown(address, false);
+    /* Set the brightness to a medium values */
+    lc.setIntensity(address, Max7219_dimm_intensity);
+    /* and clear the display */
+    lc.clearDisplay(address);
+  }
+  lc.setIntensity(0, Max7219_dimm_intensity);
+  disp2digit_on_5x7(0, 0, Max7219_dimm_intensity);
+}
+
+void display_Timer_On_Max7219(boolean need_Display_Clear,boolean need_Display_Stopped) {
+  if(need_Display_Clear) {
+    clear_Display_Max7219();
+  }
+  if(need_Display_Stopped) {
+    dimm_Display_Max7219(iSecCounter1);
+  }
+  else {
+    bright_Display_Max7219(iSecCounter1);
+  }
+  //disp_MinsAsColumn_On_Max7219(iMinCounter1,3);
+}
+#endif // #ifdef MAX7219_ENABLED
+
 /**
 * @brief Converts the minutes and seconds to char and updates the TimeCounterStr string
 * @param tMinutes : minutes value
@@ -719,24 +756,9 @@ void Ssd1306_Oled_Init(void) {
   oled_display.clear();
 }
 
-void Max7219_Led_Matrix_Init(void) {
-  //we have already set the number of devices when we created the LedControl
-  int devices = lc.getDeviceCount();
-  //we have to init all devices in a loop
-  for (int address = 0; address < devices; address++) {
-    /*The MAX72XX is in power-saving mode on startup*/
-    lc.shutdown(address, false);
-    /* Set the brightness to a medium values */
-    lc.setIntensity(address, dimm_intensity);
-    /* and clear the display */
-    lc.clearDisplay(address);
-  }
-  lc.setIntensity(0, dimm_intensity);
-  disp2digit_on_5x7(0, 0, dimm_intensity);
-}
 
 void display_Timer_On_All(boolean need_Display_Clear,boolean need_Display_Stopped) {
-  #ifdef SERIAL_MAX7219_ENABLED
+  #ifdef MAX7219_ENABLED
   display_Timer_On_Max7219(need_Display_Clear,need_Display_Stopped);
   #endif
   update_TimeCounterStr(iMinCounter1,iSecCounter1);
@@ -764,18 +786,6 @@ void display_Timer_On_Ssd1306(boolean need_Display_Clear,boolean need_Display_St
   }
 }
 
-void display_Timer_On_Max7219(boolean need_Display_Clear,boolean need_Display_Stopped) {
-  if(need_Display_Clear) {
-    clear_Display_Max7219();
-  }
-  if(need_Display_Stopped) {
-    dimm_Display_Max7219(iSecCounter1);
-  }
-  else {
-    bright_Display_Max7219(iSecCounter1);
-  }
-  //disp_MinsAsColumn(iMinCounter1,3);
-}
 
 void ina219_Init(void)
 {

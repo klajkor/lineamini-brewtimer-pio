@@ -128,7 +128,7 @@ int DEBUG = 1;  //Set to 1 to enable serial monitor debugging info
 //Switch Variables - "sw1"
 int state_Manual_Switch = 0;                   //The actual ~state~ of the state machine
 int state_prev_Manual_Switch = 0;              //Remembers the previous state (useful to know when the state has changed)
-int pin_Manual_Switch = 3;                    //Input/Output (IO) pin for the switch
+int pin_Manual_Switch = 10;                    //Input/Output (IO) pin for the switch, 10 = pin 10 a.k.a. D10
 int value_Manual_Switch = 0;                     //Value of the switch ("HIGH" or "LOW")
 unsigned long t_Manual_Switch = 0;             //Typically represents the current time of the switch
 unsigned long t_0_Manual_Switch = 0;           //The time that we last passed through an interesting state
@@ -136,8 +136,9 @@ unsigned long bounce_delay_Manual_Switch = 20; //The delay to list for bouncing
 
 //Switch Variables - "Reed_Switch"
 int state_Reed_Switch = 0;                   //The actual ~state~ of the state machine
-int pin_Reed_Switch = 3;                    //Input/Output (IO) pin for the switch
-int value_Reed_Switch = 0;                     //Value of the switch ("HIGH" or "LOW")
+//int pin_Reed_Switch = 3;                   //Input/Output (IO) pin for the switch <- old config!
+int pin_Reed_Switch = 10;                    //Input/Output (IO) pin for the switch, 10 = pin 10 a.k.a. D10
+int value_Reed_Switch = 0;                   //Value of the switch ("HIGH" or "LOW")
 unsigned long t_Reed_Switch = 0;             //Typically represents the current time of the switch
 unsigned long t_0_Reed_Switch = 0;           //The time that we last passed through an interesting state
 unsigned long bounce_delay_Reed_Switch = 5; //The delay to filter bouncing
@@ -760,6 +761,10 @@ void Ssd1306_Oled_Init(void) {
   oled_display.println(F("Linea Mini "));
   oled_display.println(F("Brew Timer "));
   delay(1500);
+  oled_display.clear();
+  oled_display.setRow(0);
+  oled_display.println(F("Version 1.1"));
+  delay(1000);
   oled_display.clear();
 }
 

@@ -49,6 +49,9 @@
 //uncomment the line below if you would like to use HT16K33 LED matrix
 //#define HT16K33_ENABLED 1
 
+//uncomment the line below if you would like to use SSD1306 LED matrix
+#define SSD1306_ENABLED 1
+
 
 #define LED_VERT_OFFSET 2
 #define LED_HOR_OFFSET 1
@@ -185,17 +188,19 @@ int beep_number_Status_Led = 2;
 // pin 11 is connected to the CLK on the display
 // pin 10 is connected to LOAD on the display
 #ifdef MAX7219_ENABLED
-LedControl lc = LedControl(12, 11, 10, 1); //sets the 3 control pins as 12, 11 & 10 and then sets 1 display
+LedControl lc_max7219 = LedControl(12, 11, 10, 1); //sets the 3 control pins as 12, 11 & 10 and then sets 1 display
 byte Max7219_intensity = 1;
 byte Max7219_bright_intensity = 8;
 byte Max7219_dimm_intensity = 1;
-#endif
+#endif // #ifdef MAX7219_ENABLED
 
 char TimeCounterStr[] = "00:00"; /** String to store time counter value, format: MM:SS */
 
+#ifdef SSD1306_ENABLED
 //Set up OLED display
-SSD1306AsciiWire oled_display;
-//SSD1306AsciiAvrI2c oled_display; /* Use only when no other I2C devices are used! */
+SSD1306AsciiWire oled_ssd1306_display;
+//SSD1306AsciiAvrI2c oled_ssd1306_display; /* Use only when no other I2C devices are used! */
+#endif // #ifdef SSD1306_ENABLED
 
 // Current and voltage sensor class
 Adafruit_INA219 ina219_monitor;
@@ -216,15 +221,15 @@ char temperature_String_V2[] = "999.9";
 char temperature_String_V2_Led_Matrix[] = "999.9";
 float thermistor_Res = 0.00; // Thermistor calculated resistance
 
+#ifdef HT16K33_ENABLED
 //HT16K33 LED Matrix display
 //Define lpaseen library class
-#ifdef HT16K33_ENABLED
 HT16K33 HT;
-#endif
 
 //Define Adafruit library class
 //Adafruit_8x16minimatrix matrix = Adafruit_8x16minimatrix();
-Adafruit_Y_Mirrored_8x16minimatrix matrix = Adafruit_Y_Mirrored_8x16minimatrix();
+Adafruit_Y_Mirrored_8x16minimatrix matrix_ht16k33 = Adafruit_Y_Mirrored_8x16minimatrix();
+#endif // #ifdef HT16K33_ENABLED
 
 /* Function declarations */
 
@@ -274,11 +279,13 @@ void setup() {
   Serial.println(F("Debugging is ON"));
   #endif
   Gpio_Init();
+  ina219_Init();
   #ifdef MAX7219_ENABLED
   Max7219_Led_Matrix_Init();
   #endif
+  #ifdef SSD1306_ENABLED
   Ssd1306_Oled_Init();
-  ina219_Init();
+  #endif
   #ifdef HT16K33_ENABLED
   Ht16k33_Led_Matrix_Init();
   #endif
@@ -583,9 +590,9 @@ void StateMachine_Status_Led(void) {
 * @brief Clears the dot matrix display(s)
 */
 void clear_Display_Max7219(void) {
-  int devices = lc.getDeviceCount();
+  int devices = lc_max7219.getDeviceCount();
   for (byte address = 0; address < devices; address++) {
-    lc.clearDisplay(address);
+    lc_max7219.clearDisplay(address);
   }
 }
 
@@ -627,7 +634,7 @@ void disp2digit_on_5x7(int d_address, int num2disp, int d_intensity) {
   num2disp = num2disp % 100;
   disp_ch_tens = 0x30 + num2disp / 10;
   disp_ch_ones = 0x30 + num2disp % 10;
-  lc.setIntensity(d_address, d_intensity);
+  lc_max7219.setIntensity(d_address, d_intensity);
   puttinydigit3x5l(d_address, 0, 0, disp_ch_tens);
   puttinydigit3x5l(d_address, 4, 0, disp_ch_ones);
 
@@ -649,7 +656,7 @@ void puttinydigit3x5l(int address, byte x, byte y, char c)
     char_selector = (c - '0');
     for (dot_col = 0; dot_col < 3; dot_col++) {
       dots = pgm_read_byte_near(&digit3x5landscape[char_selector][dot_col]);
-      lc.setRow(address, dot_col + x, dots << 3);
+      lc_max7219.setRow(address, dot_col + x, dots << 3);
 
     }
   }
@@ -701,22 +708,22 @@ void disp_MinsAsColumn_On_Max7219(int dispMinutes, byte dispCol) {
       columnBits=B01111000;
       break;
   }
-  lc.setRow(address,dispCol,columnBits);
+  lc_max7219.setRow(address,dispCol,columnBits);
 }
 
 void Max7219_Led_Matrix_Init(void) {
   //we have already set the number of devices when we created the LedControl
-  int devices = lc.getDeviceCount();
+  int devices = lc_max7219.getDeviceCount();
   //we have to init all devices in a loop
   for (int address = 0; address < devices; address++) {
     /*The MAX72XX is in power-saving mode on startup*/
-    lc.shutdown(address, false);
+    lc_max7219.shutdown(address, false);
     /* Set the brightness to a medium values */
-    lc.setIntensity(address, Max7219_dimm_intensity);
+    lc_max7219.setIntensity(address, Max7219_dimm_intensity);
     /* and clear the display */
-    lc.clearDisplay(address);
+    lc_max7219.clearDisplay(address);
   }
-  lc.setIntensity(0, Max7219_dimm_intensity);
+  lc_max7219.setIntensity(0, Max7219_dimm_intensity);
   disp2digit_on_5x7(0, 0, Max7219_dimm_intensity);
 }
 
@@ -752,32 +759,21 @@ void Gpio_Init(void) {
   pinMode(pin_Status_Led, OUTPUT);
 }
 
+#ifdef SSD1306_ENABLED
 void Ssd1306_Oled_Init(void) {
   Wire.begin();
-  oled_display.begin(&Adafruit128x32, OLED_I2C_ADDR);
-  oled_display.clear();
-  oled_display.setFont(fixed_bold10x15);
-  oled_display.setRow(0);
-  oled_display.println(F("Linea Mini "));
-  oled_display.println(F("Brew Timer "));
+  oled_ssd1306_display.begin(&Adafruit128x32, OLED_I2C_ADDR);
+  oled_ssd1306_display.clear();
+  oled_ssd1306_display.setFont(fixed_bold10x15);
+  oled_ssd1306_display.setRow(0);
+  oled_ssd1306_display.println(F("Linea Mini "));
+  oled_ssd1306_display.println(F("Brew Timer "));
   delay(1500);
-  oled_display.clear();
-  oled_display.setRow(0);
-  oled_display.println(F("Version 1.1"));
+  oled_ssd1306_display.clear();
+  oled_ssd1306_display.setRow(0);
+  oled_ssd1306_display.println(F("Version 1.1"));
   delay(1000);
-  oled_display.clear();
-}
-
-
-void display_Timer_On_All(boolean need_Display_Clear,boolean need_Display_Stopped) {
-  update_TimeCounterStr(iMinCounter1,iSecCounter1);
-  #ifdef MAX7219_ENABLED
-  display_Timer_On_Max7219(need_Display_Clear,need_Display_Stopped);
-  #endif  
-  display_Timer_On_Ssd1306(need_Display_Clear,need_Display_Stopped);
-  #ifdef HT16K33_ENABLED
-  display_Timer_On_Ht16k33(need_Display_Clear,need_Display_Stopped);
-  #endif
+  oled_ssd1306_display.clear();
 }
 
 /**
@@ -787,17 +783,38 @@ void display_Timer_On_All(boolean need_Display_Clear,boolean need_Display_Stoppe
 */
 void display_Timer_On_Ssd1306(boolean need_Display_Clear,boolean need_Display_Stopped) {
   if(need_Display_Clear) {
-    oled_display.clear();
+    oled_ssd1306_display.clear();
   }
-  oled_display.setCol(0);
-  oled_display.setRow(0);
-  oled_display.print(TimeCounterStr);
+  oled_ssd1306_display.setCol(0);
+  oled_ssd1306_display.setRow(0);
+  oled_ssd1306_display.print(TimeCounterStr);
   if(need_Display_Stopped) {
-    oled_display.print(F(" stop"));
+    oled_ssd1306_display.print(F(" stop"));
   }
   else {
-    oled_display.print(F("     "));
+    oled_ssd1306_display.print(F("     "));
   }
+}
+
+void display_Temperature_On_Ssd1306() {
+  oled_ssd1306_display.setCol(0);
+  oled_ssd1306_display.setRow(2);
+  oled_ssd1306_display.print(temperature_String_V2);
+  oled_ssd1306_display.print(F(" *C"));
+}
+#endif // #ifdef SSD1306_ENABLED
+
+void display_Timer_On_All(boolean need_Display_Clear,boolean need_Display_Stopped) {
+  update_TimeCounterStr(iMinCounter1,iSecCounter1);
+  #ifdef MAX7219_ENABLED
+  display_Timer_On_Max7219(need_Display_Clear,need_Display_Stopped);
+  #endif
+  #ifdef SSD1306_ENABLED
+  display_Timer_On_Ssd1306(need_Display_Clear,need_Display_Stopped);
+  #endif
+  #ifdef HT16K33_ENABLED
+  display_Timer_On_Ht16k33(need_Display_Clear,need_Display_Stopped);
+  #endif
 }
 
 
@@ -881,87 +898,86 @@ void Ht16k33_Led_Matrix_Init(void) {
   HT.begin(0x70);
   HT.setBrightness(1);
   HT.clearAll();
-  matrix.begin(0x70);
-  matrix.setFont(&Picopixel);
+  matrix_ht16k33.begin(0x70);
+  matrix_ht16k33.setFont(&Picopixel);
 }
 
 void display_Timer_On_Ht16k33(boolean need_Display_Clear,boolean need_Display_Stopped) {
   char *tempPointer;
-  matrix.setRotation(1);
-  matrix.setTextColor(LED_ON);
-  matrix.clear();
+  matrix_ht16k33.setRotation(1);
+  matrix_ht16k33.setTextColor(LED_ON);
+  matrix_ht16k33.clear();
   if(need_Display_Stopped) {
     HT.setBrightness(HT16K33_DIMMED_BRIGHTNESS);
   }
   else {
     HT.setBrightness(HT16K33_NORMAL_BRIGHTNESS);
   }
-  matrix.setCursor(1,5);
+  matrix_ht16k33.setCursor(1,5);
   tempPointer=&TimeCounterStr[1];
-  matrix.print(tempPointer);
+  matrix_ht16k33.print(tempPointer);
   //HT.setLedNow((iSecCounter1 % 15)*8+7);
-  matrix.setCursor((iSecCounter1 % 15),7);
-  matrix.print(".");
-  matrix.writeDisplay();
+  matrix_ht16k33.setCursor((iSecCounter1 % 15),7);
+  matrix_ht16k33.print(".");
+  matrix_ht16k33.writeDisplay();
 }
 
 void display_Temperature_On_Ht16k33() {
-  matrix.setRotation(1);
-  matrix.setTextColor(LED_ON);
-  matrix.clear();
-  matrix.setCursor(0,5);
+  matrix_ht16k33.setRotation(1);
+  matrix_ht16k33.setTextColor(LED_ON);
+  matrix_ht16k33.clear();
+  matrix_ht16k33.setCursor(0,5);
   HT.setBrightness(HT16K33_TEMPERATURE_BRIGHTNESS);
-  matrix.print(temperature_String_V2_Led_Matrix);
-  matrix.writeDisplay();
+  matrix_ht16k33.print(temperature_String_V2_Led_Matrix);
+  matrix_ht16k33.writeDisplay();
 }
-#endif // #ifdef HT16K33_ENABLED
 
-void Adafruit_Text_Display_Test(void) {
+void Adafruit_Text_Display_Test_On_Ht16k33(void) {
   //int8_t x,y;
-  matrix.setTextSize(1);
-  matrix.setTextWrap(false);
+  matrix_ht16k33.setTextSize(1);
+  matrix_ht16k33.setTextWrap(false);
   /**
   Serial.println(F("rotation=0"));
-  matrix.setRotation(0);
-  matrix.setTextColor(LED_ON);
-  matrix.clear();
-  matrix.setCursor(0,0);
-  matrix.print("123");
-  matrix.writeDisplay();
+  matrix_ht16k33.setRotation(0);
+  matrix_ht16k33.setTextColor(LED_ON);
+  matrix_ht16k33.clear();
+  matrix_ht16k33.setCursor(0,0);
+  matrix_ht16k33.print("123");
+  matrix_ht16k33.writeDisplay();
   delay(5000);
   */
   Serial.println(F("rotation=1"));
-  matrix.setRotation(1);
-  matrix.setTextColor(LED_ON);
-  matrix.clear();
-  matrix.setCursor(0,7);
-  matrix.print("0:12");
-  matrix.writeDisplay();
+  matrix_ht16k33.setRotation(1);
+  matrix_ht16k33.setTextColor(LED_ON);
+  matrix_ht16k33.clear();
+  matrix_ht16k33.setCursor(0,7);
+  matrix_ht16k33.print("0:12");
+  matrix_ht16k33.writeDisplay();
   delay(5000);
   Serial.println(F("rotation=3"));
-  matrix.setRotation(3);
-  matrix.clear();
-  matrix.setCursor(0,7);
-  matrix.print("1:00");
-  matrix.writeDisplay();
+  matrix_ht16k33.setRotation(3);
+  matrix_ht16k33.clear();
+  matrix_ht16k33.setCursor(0,7);
+  matrix_ht16k33.print("1:00");
+  matrix_ht16k33.writeDisplay();
   delay(5000);
   Serial.println(F("rotation=1"));
-  matrix.setRotation(1);
-  matrix.clear();
-  matrix.setCursor(0,7);
-  matrix.print("100.0*");
-  matrix.writeDisplay();
+  matrix_ht16k33.setRotation(1);
+  matrix_ht16k33.clear();
+  matrix_ht16k33.setCursor(0,7);
+  matrix_ht16k33.print("100.0*");
+  matrix_ht16k33.writeDisplay();
   delay(5000);
   for(int i=50;i<120;i++) {
-    matrix.clear();
-    matrix.setCursor(0,7);
-    matrix.print(i);
-    matrix.writeDisplay();
+    matrix_ht16k33.clear();
+    matrix_ht16k33.setCursor(0,7);
+    matrix_ht16k33.print(i);
+    matrix_ht16k33.writeDisplay();
     delay(200);
   }
-  matrix.setRotation(0);
-
+  matrix_ht16k33.setRotation(0);
 }
+#endif // #ifdef HT16K33_ENABLED
 
 void StateMachine_Display(void) {
 
@@ -973,7 +989,7 @@ void StateMachine_Display(void) {
 
     case DISPLAY_STATE_TIMER_RUNNING:
       Display_Running_Timer();
-      display_Temperature_On_Ssd1306();
+      Display_Temperature();
       state_Display = DISPLAY_STATE_DO_NOTHING;
       break;
 
@@ -1009,15 +1025,10 @@ void Display_Stopped_Timer(void) {
 }
 
 void Display_Temperature(void) {
+  #ifdef SSD1303_ENABLED
   display_Temperature_On_Ssd1306();
+  #endif
   #ifdef HT16K33_ENABLED
   display_Temperature_On_Ht16k33();
   #endif
-}
-
-void display_Temperature_On_Ssd1306() {
-  oled_display.setCol(0);
-  oled_display.setRow(2);
-  oled_display.print(temperature_String_V2);
-  oled_display.print(F(" *C"));
 }

@@ -8,10 +8,11 @@
 * Board: Arduino Pro Mini/Nano
 *
 * Extension modules and hw used:
-*  - SSD1306 OLED display, I2C
+*  - SSD1306 OLED display, I2C - optional, please see source code for feature switch (SSD1306_ENABLED)
 *  - MAX7219 LED matrix display, I2C - optional, please see source code for feature switch (MAX7219_ENABLED)
 *  - 5x7 dot matrix displaying 3x5 digits (controlled by MAX7219)
 *  - Holtek HT16K33 LED matrix display, I2C - optional, please see source code for feature switch (HT16K33_ENABLED)
+*  - ILI9340 TFT display, SPI and 8 bit data - optional, please see source code for feature switch (ILI9340_ENABLED)
 *  - reed switch, sensing magnet valve sc
 *  - INA219, I2C
 * Libraries used:
@@ -19,26 +20,11 @@
 *  - LedControl by wayoda - Copyright (c) 2012, Eberhard Fahle
 *  - Adafruit INA219 by Adafruit - Copyright (c) 2012, Adafruit Industries
 *  - HT16K33 - Copyright (c) 2017, lpaseen, Peter Sjoberg <peters-alib AT techwiz.ca>
+*  - MCUFRIEND_kbv - Copyright (c) 2020, David Prentice
 *
 * BSD license, all text here must be included in any redistribution.
 *
 */
-
-#include <Arduino.h>
-#include <math.h>
-#include <Wire.h>
-#include <Adafruit_INA219.h>
-#include <LedControl.h>
-#include <SSD1306Ascii.h>
-#include <SSD1306AsciiWire.h>
-//#include "SSD1306AsciiAvrI2c.h" /* Use only when no other I2C devices are used! */
-#include <ht16k33.h>
-#include <Adafruit_LEDBackpack.h>
-#include <Adafruit_GFX.h>
-#include <Fonts/Picopixel.h>
-#include <Fonts/TomThumb.h>
-#include "TinyDigit.h"
-#include "Mirrored_LEDBackpack.h"
 
 //uncomment the line below if you would like to have debug messages
 //#define SERIAL_DEBUG_ENABLED 1
@@ -49,8 +35,43 @@
 //uncomment the line below if you would like to use HT16K33 LED matrix
 //#define HT16K33_ENABLED 1
 
-//uncomment the line below if you would like to use SSD1306 LED matrix
-#define SSD1306_ENABLED 1
+//uncomment the line below if you would like to use SSD1306 OLED display
+//#define SSD1306_ENABLED 1
+
+//uncomment the line below if you would like to use ILI9340 TFT display
+#define ILI9340_ENABLED 1
+
+#include <Arduino.h>
+#include <math.h>
+#include <Wire.h>
+#include <Adafruit_INA219.h>
+#include <Adafruit_GFX.h>
+
+#ifdef MAX7219_ENABLED
+  #include <LedControl.h>
+#endif // #ifdef MAX7219_ENABLED
+
+#ifdef  SSD1306_ENABLED
+  #include <SSD1306Ascii.h>
+  #include <SSD1306AsciiWire.h>
+  //#include "SSD1306AsciiAvrI2c.h" /* Use only when no other I2C devices are used! */
+#endif
+
+#ifdef  HT16K33_ENABLED
+  #include <ht16k33.h>
+  #include <Adafruit_LEDBackpack.h>
+  #include <Fonts/Picopixel.h>
+  //#include <Fonts/TomThumb.h>
+  #include "TinyDigit.h"
+  #include "Mirrored_LEDBackpack.h"
+#endif
+
+#ifdef ILI9340_ENABLED
+  #include <SPI.h>          // f.k. for Arduino-1.5.2
+  #include <MCUFRIEND_kbv.h> // for ILI9340
+  #include <Fonts/FreeSans12pt7b.h>
+#endif
+
 
 
 #define LED_VERT_OFFSET 2
@@ -99,6 +120,28 @@
 #define HT16K33_NORMAL_BRIGHTNESS 8
 #define HT16K33_TEMPERATURE_BRIGHTNESS 4
 #define HT16K33_DIMMED_BRIGHTNESS 1
+
+//Constants for ILI9340 display
+#define LCD_CS A3 // Chip Select goes to Analog 3
+#define LCD_CD A2 // Command/Data goes to Analog 2
+#define LCD_WR A1 // LCD Write goes to Analog 1
+#define LCD_RD A0 // LCD Read goes to Analog 0
+#define LCD_RESET A4 // Can alternately just connect to Arduino's reset pin
+// Assign human-readable names to some common 16-bit color values:
+#define	BLACK   0x0000
+#define	BLUE    0x001F
+#define	RED     0xF800
+#define	GREEN   0x07E0
+#define CYAN    0x07FF
+#define MAGENTA 0xF81F
+#define YELLOW  0xFFE0
+#define WHITE   0xFFFF
+//Screen coordinates
+#define ILI9340_TIMER_POS_X 50
+#define ILI9340_TIMER_POS_Y 60
+#define ILI9340_TIMER_WIDTH 180
+#define ILI9340_TIMER_HEIGTH 60
+#define ILI9340_TIMER_Y_OFFSET 5
 
 // Thermistor calculation values
 // Original idea and code from Jimmy Roasts, https://github.com/JimmyRoasts/LaMarzoccoTempSensor
@@ -231,6 +274,10 @@ HT16K33 HT;
 Adafruit_Y_Mirrored_8x16minimatrix matrix_ht16k33 = Adafruit_Y_Mirrored_8x16minimatrix();
 #endif // #ifdef HT16K33_ENABLED
 
+#ifdef ILI9340_ENABLED
+MCUFRIEND_kbv tft_ili9340;
+#endif // #ifdef ILI9340_ENABLED
+
 /* Function declarations */
 
 void StateMachine_counter1(void);
@@ -268,6 +315,11 @@ void Adafruit_Text_Display_Test(void);
 void Display_Running_Timer(void);
 void Display_Stopped_Timer(void);
 void Display_Temperature(void);
+void Display_Clear(void);
+
+void ILI9340_Init(void);
+void display_Timer_On_ILI9340(boolean need_Display_Clear,boolean need_Display_Stopped);
+void Display_Clear_ILI9340(uint16_t color);
 
 
 /* Functions */
@@ -280,6 +332,9 @@ void setup() {
   #endif
   Gpio_Init();
   ina219_Init();
+  #ifdef ILI9340_ENABLED
+  ILI9340_Init();
+  #endif // #ifdef ILI9340_ENABLED
   #ifdef MAX7219_ENABLED
   Max7219_Led_Matrix_Init();
   #endif
@@ -293,8 +348,9 @@ void setup() {
   StateMachine_counter1();
   StateMachine_Reed_Switch();
   StateMachine_Volt_Meter();
+  state_Display = DISPLAY_STATE_RESET;
   StateMachine_Display();
-
+  Display_Clear();
   //Adafruit_Text_Display_Test();
 
 }
@@ -766,14 +822,13 @@ void Ssd1306_Oled_Init(void) {
   oled_ssd1306_display.clear();
   oled_ssd1306_display.setFont(fixed_bold10x15);
   oled_ssd1306_display.setRow(0);
-  oled_ssd1306_display.println(F("Linea Mini "));
-  oled_ssd1306_display.println(F("Brew Timer "));
-  delay(1500);
-  oled_ssd1306_display.clear();
-  oled_ssd1306_display.setRow(0);
-  oled_ssd1306_display.println(F("Version 1.1"));
+  oled_ssd1306_display.println("Linea Mini ");
+  oled_ssd1306_display.println("Brew Timer ");
   delay(1000);
   oled_ssd1306_display.clear();
+  oled_ssd1306_display.setRow(0);
+  oled_ssd1306_display.println("Version 1.1");
+  delay(500);  
 }
 
 /**
@@ -789,10 +844,10 @@ void display_Timer_On_Ssd1306(boolean need_Display_Clear,boolean need_Display_St
   oled_ssd1306_display.setRow(0);
   oled_ssd1306_display.print(TimeCounterStr);
   if(need_Display_Stopped) {
-    oled_ssd1306_display.print(F(" stop"));
+    oled_ssd1306_display.print(" stop ");
   }
   else {
-    oled_ssd1306_display.print(F("     "));
+    oled_ssd1306_display.print("      ");
   }
 }
 
@@ -814,6 +869,9 @@ void display_Timer_On_All(boolean need_Display_Clear,boolean need_Display_Stoppe
   #endif
   #ifdef HT16K33_ENABLED
   display_Timer_On_Ht16k33(need_Display_Clear,need_Display_Stopped);
+  #endif
+  #ifdef ILI9340_ENABLED
+  display_Timer_On_ILI9340(need_Display_Clear,need_Display_Stopped);
   #endif
 }
 
@@ -946,7 +1004,7 @@ void Adafruit_Text_Display_Test_On_Ht16k33(void) {
   matrix_ht16k33.writeDisplay();
   delay(5000);
   */
-  Serial.println(F("rotation=1"));
+  Serial.println("rotation=1");
   matrix_ht16k33.setRotation(1);
   matrix_ht16k33.setTextColor(LED_ON);
   matrix_ht16k33.clear();
@@ -954,14 +1012,14 @@ void Adafruit_Text_Display_Test_On_Ht16k33(void) {
   matrix_ht16k33.print("0:12");
   matrix_ht16k33.writeDisplay();
   delay(5000);
-  Serial.println(F("rotation=3"));
+  Serial.println("rotation=3");
   matrix_ht16k33.setRotation(3);
   matrix_ht16k33.clear();
   matrix_ht16k33.setCursor(0,7);
   matrix_ht16k33.print("1:00");
   matrix_ht16k33.writeDisplay();
   delay(5000);
-  Serial.println(F("rotation=1"));
+  Serial.println("rotation=1");
   matrix_ht16k33.setRotation(1);
   matrix_ht16k33.clear();
   matrix_ht16k33.setCursor(0,7);
@@ -983,7 +1041,7 @@ void StateMachine_Display(void) {
 
   switch (state_Display) {
     case DISPLAY_STATE_RESET:
-      Display_Stopped_Timer();      
+      Display_Stopped_Timer();
       state_Display = DISPLAY_STATE_DO_NOTHING;
       break;
 
@@ -1032,3 +1090,71 @@ void Display_Temperature(void) {
   display_Temperature_On_Ht16k33();
   #endif
 }
+
+void Display_Clear(void) {
+  #ifdef SSD1303_ENABLED
+  oled_ssd1306_display.clear();
+  #endif
+  #ifdef ILI9340_ENABLED
+  Display_Clear_ILI9340(WHITE);
+  #endif
+}
+
+#ifdef ILI9340_ENABLED
+void ILI9340_Init(void) {
+  uint16_t ID = tft_ili9340.readID(); //
+  #ifdef SERIAL_DEBUG_ENABLED
+  Serial.print("TFT ID = 0x");
+  Serial.println(ID, HEX);
+  #endif
+  if (ID == 0xD3D3) ID = 0x9481; // write-only shield
+  tft_ili9340.begin(ID);
+  tft_ili9340.setRotation(3);
+  Display_Clear_ILI9340(BLACK);
+  tft_ili9340.setCursor(0, 40);
+  uint16_t wid = tft_ili9340.width();
+  tft_ili9340.setTextColor(WHITE);  
+  tft_ili9340.setFont(&FreeSans12pt7b);
+  tft_ili9340.setTextSize(2);
+  tft_ili9340.println("Linea Mini ");
+  tft_ili9340.println("Brew Timer ");
+  tft_ili9340.println("Version 1.0");
+  delay(1500);
+}
+
+/**
+* @brief Updates and then displays the TimeCounterStr string on the ILI9340 TFT screen, format: MM:SS
+* @param need_Display_Clear : is display clear needed?
+* @param need_Display_Stopped : is visualisation of sopped timer needed?
+*/
+void display_Timer_On_ILI9340(boolean need_Display_Clear,boolean need_Display_Stopped) {
+  if(need_Display_Clear) {
+    Display_Clear_ILI9340(WHITE);
+  }
+  tft_ili9340.setFont(&FreeSans12pt7b);
+  tft_ili9340.setTextSize(3);
+  if(need_Display_Stopped) {
+    tft_ili9340.setTextColor(CYAN);
+  }
+  else {
+    tft_ili9340.setTextColor(BLUE);
+  }  
+  tft_ili9340.fillRect(ILI9340_TIMER_POS_X, ILI9340_TIMER_Y_OFFSET, ILI9340_TIMER_WIDTH, ILI9340_TIMER_HEIGTH + ILI9340_TIMER_Y_OFFSET, WHITE);
+  tft_ili9340.setCursor(ILI9340_TIMER_POS_X, ILI9340_TIMER_POS_Y);
+  tft_ili9340.println(TimeCounterStr);
+}
+
+void display_Temperature_On_ILI9340() {
+  //oled_ssd1306_display.setCol(0);
+  //oled_ssd1306_display.setRow(2);
+  //oled_ssd1306_display.print(temperature_String_V2);
+  //oled_ssd1306_display.print(F(" *C"));
+}
+
+void Display_Clear_ILI9340(uint16_t color) {
+  //Serial.println("Display_Clear_ILI9340");
+  tft_ili9340.fillScreen(color);
+  tft_ili9340.setCursor(0, 0);
+  delay(50);
+}
+#endif // #ifdef ILI9340_ENABLED

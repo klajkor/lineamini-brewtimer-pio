@@ -1,4 +1,4 @@
-# Arduino Brew Timer for LaMarzocco Linea Mini espresso machine
+# Arduino Brew Timer and Temperature Display for LaMarzocco Linea Mini espresso machine
 
 ## Board
 - Arduino Pro Mini / Nano

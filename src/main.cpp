@@ -20,6 +20,14 @@
  *  - Adafruit INA219 by Adafruit - Copyright (c) 2012, Adafruit Industries
  *  - HT16K33 - Copyright (c) 2017, lpaseen, Peter Sjoberg <peters-alib AT techwiz.ca>
  *
+ * Wiring of reed switch:
+ *  - D3
+ *  - GND
+ *
+ * Wiring of I2C devices (INA219, SSD1306):
+ *  - SDA -> A4
+ *  - SCL -> A5
+ *
  * BSD license, all text here must be included in any redistribution.
  *
  */
@@ -31,22 +39,18 @@
 //#define MAX7219_ENABLED 1
 
 // uncomment the line below if you would like to use HT16K33 LED matrix
-//#define HT16K33_ENABLED 1
+#define HT16K33_ENABLED 1
 
 // uncomment the line below if you would like to use SSD1306 OLED display
 #define SSD1306_ENABLED 1
 
-// uncomment the line below if you would like to use ILI9340 TFT display
-//#define ILI9340_ENABLED 1
-
-#include <Adafruit_GFX.h>
 #include <Adafruit_INA219.h>
 #include <Arduino.h>
 #include <Wire.h>
 #include <math.h>
 
 #ifdef MAX7219_ENABLED
-#include <LedControl.h>
+#include "display_max7219_ledmatrix.h"
 #endif // #ifdef MAX7219_ENABLED
 
 #ifdef SSD1306_ENABLED
@@ -54,17 +58,8 @@
 #endif
 
 #ifdef HT16K33_ENABLED
-#include <Adafruit_LEDBackpack.h>
-#include <Fonts/Picopixel.h>
-#include <ht16k33.h>
-//#include <Fonts/TomThumb.h>
-#include "Mirrored_LEDBackpack.h"
-#include "TinyDigit.h"
+#include "display_ht16k33.h"
 #endif
-
-#define LED_VERT_OFFSET 2
-#define LED_HOR_OFFSET 1
-#define LED_DIGIT_OFFSET 4
 
 #define SW_ON_LEVEL LOW   /* Switch on level */
 #define SW_OFF_LEVEL HIGH /* Switch off level */
@@ -103,10 +98,6 @@
 #define DISPLAY_STATE_TEMPERATURE 4
 #define DISPLAY_STATE_DO_NOTHING 5
 
-#define HT16K33_NORMAL_BRIGHTNESS 8
-#define HT16K33_TEMPERATURE_BRIGHTNESS 4
-#define HT16K33_DIMMED_BRIGHTNESS 1
-
 // Thermistor calculation values
 // Original idea and code from Jimmy Roasts, https://github.com/JimmyRoasts/LaMarzoccoTempSensor
 
@@ -135,24 +126,14 @@
 // Top Level Variables:
 int DEBUG = 1; // Set to 1 to enable serial monitor debugging info
 
-// Switch Variables - "sw1"
-int           state_Manual_Switch = 0;      // The actual ~state~ of the state machine
-int           state_prev_Manual_Switch = 0; // Remembers the previous state (useful to know when the state has changed)
-int           pin_Manual_Switch = 10;       // Input/Output (IO) pin for the switch, 10 = pin 10 a.k.a. D10
-int           value_Manual_Switch = 0;      // Value of the switch ("HIGH" or "LOW")
-unsigned long t_Manual_Switch = 0;          // Typically represents the current time of the switch
-unsigned long t_0_Manual_Switch = 0;        // The time that we last passed through an interesting state
-unsigned long bounce_delay_Manual_Switch = 20; // The delay to list for bouncing
-
 // Switch Variables - "Reed_Switch"
-int state_Reed_Switch = 0; // The actual ~state~ of the state machine
-// int pin_Reed_Switch = 3;                   //Input/Output (IO) pin for the switch <- old config!
-int           pin_Reed_Switch = 10;         // Input/Output (IO) pin for the switch, 10 = pin 10 a.k.a. D10
-int           value_Reed_Switch = 0;        // Value of the switch ("HIGH" or "LOW")
-unsigned long t_Reed_Switch = 0;            // Typically represents the current time of the switch
-unsigned long t_0_Reed_Switch = 0;          // The time that we last passed through an interesting state
-unsigned long bounce_delay_Reed_Switch = 5; // The delay to filter bouncing
-unsigned int  bin_counter = 0;              // binary counter for reed switch
+int           state_Reed_Switch = 0;                      // The actual ~state~ of the state machine
+int           pin_Reed_Switch = 3;                        // Input/Output (IO) pin for the switch, 3 = pin 3 a.k.a. D3
+int           value_Reed_Switch = 0;                      // Value of the switch ("HIGH" or "LOW")
+unsigned long t_Reed_Switch = 0;                          // Typically represents the current time of the switch
+unsigned long t_0_Reed_Switch = 0;                        // The time that we last passed through an interesting state
+unsigned long bounce_delay_Reed_Switch = 5;               // The delay to filter bouncing
+unsigned int  bin_counter = 0;                            // binary counter for reed switch
 int           virtual_Reed_Switch = VIRT_REED_SWITCH_OFF; // virtual switch
 
 // SM "Volt Meter" variables
@@ -189,17 +170,6 @@ unsigned long off_delay_Status_Led = 100;
 int           beep_count_Status_Led = 0;
 int           beep_number_Status_Led = 2;
 
-// Setup MAX7219 LED Matrix
-// pin 12 is connected to the DataIn on the display
-// pin 11 is connected to the CLK on the display
-// pin 10 is connected to LOAD on the display
-#ifdef MAX7219_ENABLED
-LedControl lc_max7219 = LedControl(12, 11, 10, 1); // sets the 3 control pins as 12, 11 & 10 and then sets 1 display
-byte       Max7219_intensity = 1;
-byte       Max7219_bright_intensity = 8;
-byte       Max7219_dimm_intensity = 1;
-#endif // #ifdef MAX7219_ENABLED
-
 char TimeCounterStr[] = "00:00"; /** String to store time counter value, format: MM:SS */
 char SecondsCounterStr[] = "00"; /** String to store time counter value, format: SS */
 
@@ -222,45 +192,23 @@ char  temperature_String_V2[] = "999.9";
 char  temperature_String_V2_Led_Matrix[] = "999.9";
 float thermistor_Res = 0.00; // Thermistor calculated resistance
 
-#ifdef HT16K33_ENABLED
-// HT16K33 LED Matrix display
-// Define lpaseen library class
-HT16K33 HT;
-
-// Define Adafruit library class
-// Adafruit_8x16minimatrix matrix = Adafruit_8x16minimatrix();
-Adafruit_Y_Mirrored_8x16minimatrix matrix_ht16k33 = Adafruit_Y_Mirrored_8x16minimatrix();
-#endif // #ifdef HT16K33_ENABLED
-
 /* Function declarations */
 
 void StateMachine_counter1(void);
-void StateMachine_Manual_Switch(void);
 void StateMachine_Reed_Switch(void);
 void StateMachine_Status_Led(void);
 void StateMachine_Volt_Meter(void);
 void StateMachine_Display(void);
 
-void clear_Display_Max7219(void);
-void bright_Display_Max7219(int dnum2disp);
-void dimm_Display_Max7219(int dnum2disp);
-void disp2digit_on_5x7(int d_address, int num2disp, int d_intensity);
-void puttinydigit3x5l(int address, byte x, byte y, char c);
-void disp_MinsAsColumn_On_Max7219(int dispMinutes, byte dispCol);
 void update_TimeCounterStr(int tMinutes, int tSeconds);
 
 void Gpio_Init(void);
-void Max7219_Led_Matrix_Init(void);
 void display_Timer_On_All(boolean need_Display_Clear, boolean need_Display_Stopped);
-void display_Timer_On_Max7219(boolean need_Display_Clear, boolean need_Display_Stopped);
-void display_Timer_On_Ht16k33(boolean need_Display_Clear, boolean need_Display_Stopped);
-void display_Temperature_On_Ht16k33(void);
 
 void ina219_Init(void);
 void get_Voltage(void);
 void calculate_Temperature_V2(void);
 
-void Ht16k33_Led_Matrix_Init(void);
 void Adafruit_Text_Display_Test(void);
 
 void Display_Running_Timer(void);
@@ -280,7 +228,7 @@ void setup()
     Gpio_Init();
     ina219_Init();
 #ifdef MAX7219_ENABLED
-    Max7219_Led_Matrix_Init();
+    max7219_led_matrix_init();
 #endif
 #ifdef SSD1306_ENABLED
     Ssd1306_Oled_Init();
@@ -387,80 +335,6 @@ void StateMachine_counter1(void)
         Serial.print(F("state_counter1: "));
         Serial.println(state_counter1, DEC);
 #endif
-    }
-}
-
-/**
- * @brief Manual switch state machine
- */
-void StateMachine_Manual_Switch(void)
-{
-
-    // Common code for every state
-    value_Manual_Switch = digitalRead(pin_Manual_Switch);
-    state_prev_Manual_Switch = state_Manual_Switch;
-
-    // State Machine Section
-    switch (state_Manual_Switch)
-    {
-    case 0: // RESET!
-        // state_Manual_Switch variable initialization
-        state_Manual_Switch = 1;
-        break;
-
-    case 1: // OFF, wait for on
-        // Wait for the pin to go low (switch=ON)
-        if (value_Manual_Switch == SW_ON_LEVEL)
-        {
-            state_Manual_Switch = 2;
-        }
-        break;
-
-    case 2: // OFF, arming to ON
-        // Start debounce timer and proceed to state3, "OFF, armed to ON"
-        t_0_Manual_Switch = millis();
-        state_Manual_Switch = 3;
-        break;
-
-    case 3: // OFF, armed to ON
-        // Check to see if debounce delay has passed and switch still ON
-        t_Manual_Switch = millis();
-        if (t_Manual_Switch - t_0_Manual_Switch > bounce_delay_Manual_Switch && value_Manual_Switch == SW_ON_LEVEL)
-        {
-            state_Manual_Switch = 4;
-        }
-        break;
-
-    case 4: // Switched ON
-        state_Manual_Switch = 5;
-        break;
-
-    case 5: // ON, wait for off
-        // Wait for the pin to go high (switch=OFF)
-        if (value_Manual_Switch == SW_OFF_LEVEL)
-        {
-            state_Manual_Switch = 6;
-        }
-        break;
-
-    case 6: // ON, arming to OFF
-        // Start debounce timer and proceed to state7, "OFF, armed to ON"
-        t_0_Manual_Switch = millis();
-        state_Manual_Switch = 7;
-        break;
-
-    case 7: // ON, armed to OFF
-        // Check to see if debounce delay has passed and switch still OFF
-        t_Manual_Switch = millis();
-        if (t_Manual_Switch - t_0_Manual_Switch > bounce_delay_Manual_Switch && value_Manual_Switch == SW_OFF_LEVEL)
-        {
-            state_Manual_Switch = 8;
-        }
-        break;
-    case 8: // Switched OFF
-        // go back to State1
-        state_Manual_Switch = 1;
-        break;
     }
 }
 
@@ -601,174 +475,6 @@ void StateMachine_Status_Led(void)
     }
 }
 
-#ifdef MAX7219_ENABLED
-/**
- * @brief Clears the dot matrix display(s)
- */
-void clear_Display_Max7219(void)
-{
-    int devices = lc_max7219.getDeviceCount();
-    for (byte address = 0; address < devices; address++)
-    {
-        lc_max7219.clearDisplay(address);
-    }
-}
-
-/**
- * @brief Displays the number on the LED display with "MAX7219_bright_intensity" brightness
- * @param dnum2disp : number to display
- */
-void bright_Display_Max7219(int dnum2disp)
-{
-    disp2digit_on_5x7(0, dnum2disp, Max7219_bright_intensity);
-// debug display
-#ifdef SERIAL_DEBUG_ENABLED
-    Serial.print(F("Bright: "));
-    Serial.println(dnum2disp);
-#endif
-}
-
-/**
- * @brief Displays the number on the LED display with "Max7219_dimm_intensity" brightness
- * @param dnum2disp : number to display
- */
-void dimm_Display_Max7219(int dnum2disp)
-{
-    disp2digit_on_5x7(0, dnum2disp, Max7219_dimm_intensity);
-// debug display
-#ifdef SERIAL_DEBUG_ENABLED
-    Serial.print(F("Dimm: "));
-    Serial.println(dnum2disp);
-#endif
-}
-
-/**
- * @brief Displays a 2 digits number in landscape mode on a MAX7219 5x7 matrix
- *
- * @param d_address : address of the LED matrix display
- * @param num2disp : number to display
- * @param d_intensity : LED intensity (=brightness) level
- */
-void disp2digit_on_5x7(int d_address, int num2disp, int d_intensity)
-{
-    char disp_ch_tens, disp_ch_ones;
-    num2disp = num2disp % 100;
-    disp_ch_tens = 0x30 + num2disp / 10;
-    disp_ch_ones = 0x30 + num2disp % 10;
-    lc_max7219.setIntensity(d_address, d_intensity);
-    puttinydigit3x5l(d_address, 0, 0, disp_ch_tens);
-    puttinydigit3x5l(d_address, 4, 0, disp_ch_ones);
-}
-
-/**
- * @brief Display tiny 3x5 digit in landscape mode on a MAX7219 5x7 matrix
- *
- * @param address : address of the LED matrix display
- * @param x : X coordinate
- * @param y : no Y coordinate can be set! (permanently zeroed currently)
- * @param c : character to display (numbers only)
- */
-void puttinydigit3x5l(int address, byte x, byte y, char c)
-{
-    byte dots, dot_col, char_selector;
-    y = 0;
-    if (c >= '0' && c <= '9')
-    {
-        char_selector = (c - '0');
-        for (dot_col = 0; dot_col < 3; dot_col++)
-        {
-            dots = pgm_read_byte_near(&digit3x5landscape[char_selector][dot_col]);
-            lc_max7219.setRow(address, dot_col + x, dots << 3);
-        }
-    }
-}
-
-void disp_MinsAsColumn_On_Max7219(int dispMinutes, byte dispCol)
-{
-    int  address = 0;
-    byte columnBits;
-    dispMinutes = dispMinutes % 10;
-    switch (dispMinutes)
-    {
-    case 0:
-        columnBits = 0;
-        break;
-    case 1:
-        columnBits = B00000001;
-        columnBits = B10000000;
-        break;
-    case 2:
-        columnBits = B00000011;
-        columnBits = B11000000;
-        break;
-    case 3:
-        columnBits = B00000111;
-        columnBits = B11100000;
-        break;
-    case 4:
-        columnBits = B00001111;
-        columnBits = B11110000;
-        break;
-    case 5:
-        columnBits = B00011111;
-        columnBits = B11111000;
-        break;
-    case 6:
-        columnBits = B00010000;
-        columnBits = B00001000;
-        break;
-    case 7:
-        columnBits = B00011000;
-        columnBits = B00011000;
-        break;
-    case 8:
-        columnBits = B00011100;
-        columnBits = B00111000;
-        break;
-    case 9:
-        columnBits = B00011110;
-        columnBits = B01111000;
-        break;
-    }
-    lc_max7219.setRow(address, dispCol, columnBits);
-}
-
-void Max7219_Led_Matrix_Init(void)
-{
-    // we have already set the number of devices when we created the LedControl
-    int devices = lc_max7219.getDeviceCount();
-    // we have to init all devices in a loop
-    for (int address = 0; address < devices; address++)
-    {
-        /*The MAX72XX is in power-saving mode on startup*/
-        lc_max7219.shutdown(address, false);
-        /* Set the brightness to a medium values */
-        lc_max7219.setIntensity(address, Max7219_dimm_intensity);
-        /* and clear the display */
-        lc_max7219.clearDisplay(address);
-    }
-    lc_max7219.setIntensity(0, Max7219_dimm_intensity);
-    disp2digit_on_5x7(0, 0, Max7219_dimm_intensity);
-}
-
-void display_Timer_On_Max7219(boolean need_Display_Clear, boolean need_Display_Stopped)
-{
-    if (need_Display_Clear)
-    {
-        clear_Display_Max7219();
-    }
-    if (need_Display_Stopped)
-    {
-        dimm_Display_Max7219(iSecCounter1);
-    }
-    else
-    {
-        bright_Display_Max7219(iSecCounter1);
-    }
-    // disp_MinsAsColumn_On_Max7219(iMinCounter1,3);
-}
-#endif // #ifdef MAX7219_ENABLED
-
 /**
  * @brief Converts the minutes and seconds to char and updates the TimeCounterStr string
  * @param tMinutes : minutes value
@@ -786,8 +492,7 @@ void update_TimeCounterStr(int tMinutes, int tSeconds)
 
 void Gpio_Init(void)
 {
-    pinMode(pin_Manual_Switch, INPUT_PULLUP); // INPUT => reverse logic!
-    pinMode(pin_Reed_Switch, INPUT_PULLUP);   // INPUT => reverse logic!
+    pinMode(pin_Reed_Switch, INPUT_PULLUP); // INPUT => reverse logic!
     pinMode(pin_Status_Led, OUTPUT);
 }
 
@@ -795,13 +500,13 @@ void display_Timer_On_All(boolean need_Display_Clear, boolean need_Display_Stopp
 {
     update_TimeCounterStr(iMinCounter1, iSecCounter1);
 #ifdef MAX7219_ENABLED
-    display_Timer_On_Max7219(need_Display_Clear, need_Display_Stopped);
+    display_Timer_On_Max7219(iSecCounter1, need_Display_Clear, need_Display_Stopped);
 #endif
 #ifdef SSD1306_ENABLED
     display_Timer_On_Ssd1306(SecondsCounterStr, need_Display_Clear, need_Display_Stopped);
 #endif
 #ifdef HT16K33_ENABLED
-    display_Timer_On_Ht16k33(need_Display_Clear, need_Display_Stopped);
+    display_Timer_On_Ht16k33(SecondsCounterStr, need_Display_Clear, need_Display_Stopped);
 #endif
 }
 
@@ -889,99 +594,6 @@ void StateMachine_Volt_Meter(void)
     }
 }
 
-#ifdef HT16K33_ENABLED
-void Ht16k33_Led_Matrix_Init(void)
-{
-    HT.begin(0x70);
-    HT.setBrightness(1);
-    HT.clearAll();
-    matrix_ht16k33.begin(0x70);
-    matrix_ht16k33.setFont(&Picopixel);
-}
-
-void display_Timer_On_Ht16k33(boolean need_Display_Clear, boolean need_Display_Stopped)
-{
-    char *tempPointer;
-    matrix_ht16k33.setRotation(1);
-    matrix_ht16k33.setTextColor(LED_ON);
-    matrix_ht16k33.clear();
-    if (need_Display_Stopped)
-    {
-        HT.setBrightness(HT16K33_DIMMED_BRIGHTNESS);
-    }
-    else
-    {
-        HT.setBrightness(HT16K33_NORMAL_BRIGHTNESS);
-    }
-    matrix_ht16k33.setCursor(1, 5);
-    tempPointer = &TimeCounterStr[1];
-    matrix_ht16k33.print(tempPointer);
-    // HT.setLedNow((iSecCounter1 % 15)*8+7);
-    matrix_ht16k33.setCursor((iSecCounter1 % 15), 7);
-    matrix_ht16k33.print(".");
-    matrix_ht16k33.writeDisplay();
-}
-
-void display_Temperature_On_Ht16k33()
-{
-    matrix_ht16k33.setRotation(1);
-    matrix_ht16k33.setTextColor(LED_ON);
-    matrix_ht16k33.clear();
-    matrix_ht16k33.setCursor(0, 5);
-    HT.setBrightness(HT16K33_TEMPERATURE_BRIGHTNESS);
-    matrix_ht16k33.print(temperature_String_V2_Led_Matrix);
-    matrix_ht16k33.writeDisplay();
-}
-
-void Adafruit_Text_Display_Test_On_Ht16k33(void)
-{
-    // int8_t x,y;
-    matrix_ht16k33.setTextSize(1);
-    matrix_ht16k33.setTextWrap(false);
-    /**
-    Serial.println(F("rotation=0"));
-    matrix_ht16k33.setRotation(0);
-    matrix_ht16k33.setTextColor(LED_ON);
-    matrix_ht16k33.clear();
-    matrix_ht16k33.setCursor(0,0);
-    matrix_ht16k33.print("123");
-    matrix_ht16k33.writeDisplay();
-    delay(5000);
-    */
-    Serial.println("rotation=1");
-    matrix_ht16k33.setRotation(1);
-    matrix_ht16k33.setTextColor(LED_ON);
-    matrix_ht16k33.clear();
-    matrix_ht16k33.setCursor(0, 7);
-    matrix_ht16k33.print("0:12");
-    matrix_ht16k33.writeDisplay();
-    delay(5000);
-    Serial.println("rotation=3");
-    matrix_ht16k33.setRotation(3);
-    matrix_ht16k33.clear();
-    matrix_ht16k33.setCursor(0, 7);
-    matrix_ht16k33.print("1:00");
-    matrix_ht16k33.writeDisplay();
-    delay(5000);
-    Serial.println("rotation=1");
-    matrix_ht16k33.setRotation(1);
-    matrix_ht16k33.clear();
-    matrix_ht16k33.setCursor(0, 7);
-    matrix_ht16k33.print("100.0*");
-    matrix_ht16k33.writeDisplay();
-    delay(5000);
-    for (int i = 50; i < 120; i++)
-    {
-        matrix_ht16k33.clear();
-        matrix_ht16k33.setCursor(0, 7);
-        matrix_ht16k33.print(i);
-        matrix_ht16k33.writeDisplay();
-        delay(200);
-    }
-    matrix_ht16k33.setRotation(0);
-}
-#endif // #ifdef HT16K33_ENABLED
-
 void StateMachine_Display(void)
 {
 
@@ -1038,13 +650,13 @@ void Display_Temperature(void)
     display_Temperature_On_Ssd1306(temperature_String_V2);
 #endif
 #ifdef HT16K33_ENABLED
-    display_Temperature_On_Ht16k33();
+    // display_Temperature_On_Ht16k33(temperature_String_V2_Led_Matrix);
 #endif
 }
 
 void Display_Clear(void)
 {
-#ifdef SSD1303_ENABLED
+#ifdef SSD1306_ENABLED
     oled_ssd1306_display.clear();
 #endif
 }

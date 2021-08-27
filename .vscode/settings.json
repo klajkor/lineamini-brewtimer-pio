@@ -1,0 +1,4 @@
+{
+    "C_Cpp.clang_format_style": "{ BasedOnStyle: Microsoft, AlignConsecutiveDeclarations: true, IndentWidth: 4, Standard: Cpp11, ColumnLimit: 119 }",
+    "editor.formatOnSave": true
+}

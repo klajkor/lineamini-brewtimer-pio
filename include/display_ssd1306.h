@@ -1,5 +1,7 @@
 #pragma once
 
+#include "display.h"
+
 #include <SSD1306Ascii.h>
 #include <SSD1306AsciiWire.h>
 

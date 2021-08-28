@@ -6,21 +6,21 @@
 static Adafruit_INA219 ina219_monitor;
 
 // State Machine "Volt Meter" variables
-static int           state_Volt_Meter = 0;
+static int           state_Volt_Meter = VOLT_METER_STATE_RESET;
 static unsigned long t_Volt_Meter = 0;
 static unsigned long t_0_Volt_Meter = 0;
-static unsigned long delay_Between_2_Measures = 300;
+static unsigned long delay_Between_2_Measures = 250;
 
 // Calculated temperature
-static float calc_Temperature_V1 = 0.0;
-static char  temperature_String_V1[] = "  999.9";
+// static float calc_Temperature_V1 = 0.0;
+// static char  temperature_String_V1[] = "  999.9";
 static float steinhart = 0.0;
 static float calc_Temperature_V2 = 0.0;
 static float thermistor_Res = 0.00; // Thermistor calculated resistance
 
 // Global temperature strings
-char temperature_String_V2[] = "999.9";
-char temperature_String_V2_Led_Matrix[] = "99.9";
+char *temperature_str_V2 = "999.9";
+char *temperature_str_V2_Led_Matrix = "99.9";
 
 void ina219_Init(void)
 {
@@ -92,22 +92,26 @@ void calculate_Temperature_V2(float thermistor_voltage)
     steinhart += (1.0 / (TEMPERATURENOMINAL + 273.15)); // + (1/To)
     steinhart = 1.0 / steinhart;                        // Invert
     calc_Temperature_V2 = (float)steinhart - 273.15;    // convert to C
-    if (calc_Temperature_V2 < -100)
+    if (calc_Temperature_V2 <= -100)
     {
         calc_Temperature_V2 = -99.9;
     }
-    dtostrf(calc_Temperature_V2, 5, 1, temperature_String_V2);
+    if (calc_Temperature_V2 > 199.9)
+    {
+        calc_Temperature_V2 = 199.9;
+    }
+    dtostrf(calc_Temperature_V2, 5, 1, temperature_str_V2);
     if (calc_Temperature_V2 >= 100.0)
     {
-        dtostrf(calc_Temperature_V2, 3, 0, temperature_String_V2_Led_Matrix);
+        dtostrf(calc_Temperature_V2, 4, 0, temperature_str_V2_Led_Matrix);
     }
     else
     {
-        dtostrf(calc_Temperature_V2, 4, 1, temperature_String_V2_Led_Matrix);
+        dtostrf(calc_Temperature_V2, 4, 1, temperature_str_V2_Led_Matrix);
     }
 // debug display
 #ifdef SERIAL_DEBUG_ENABLED
-    Serial.print(temperature_String_V1);
+    Serial.print(temperature_str_V2);
     Serial.println(F(" *C"));
 #endif
 }

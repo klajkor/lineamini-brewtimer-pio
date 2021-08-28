@@ -1,5 +1,7 @@
 #pragma once
 
+#include "display.h"
+
 //#include "Adafruit_GFX.h"
 #include "Adafruit_LEDBackpack.h"
 #include "Mirrored_LEDBackpack.h"

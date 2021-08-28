@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Adafruit_INA219.h"
+#include "main.h"
 #include <Arduino.h>
 
 #define VOLT_METER_STATE_RESET 0
@@ -35,8 +36,8 @@
 #define LMREF 5.07 // measured from LMBoard --- GND Board
 
 // Global temperature strings
-extern char temperature_String_V2[];
-extern char temperature_String_V2_Led_Matrix[];
+extern char *temperature_str_V2;
+extern char *temperature_str_V2_Led_Matrix;
 
 void  ina219_Init(void);
 float get_Voltage(void);

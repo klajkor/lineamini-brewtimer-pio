@@ -1,7 +1,5 @@
 #include "display_max7219_ledmatrix.h"
 
-//#define SERIAL_DEBUG_ENABLED 1
-
 // Setup MAX7219 LED Matrix
 // pin 12 is connected to the DataIn on the display
 // pin 11 is connected to the CLK on the display

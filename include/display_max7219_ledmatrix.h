@@ -1,4 +1,7 @@
 #pragma once
+
+#include "display.h"
+
 #include "LedControl.h"
 #include "TinyDigit.h"
 

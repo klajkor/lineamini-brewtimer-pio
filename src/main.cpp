@@ -44,7 +44,7 @@
 // uncomment the line below if you would like to use SSD1306 OLED display
 #define SSD1306_ENABLED 1
 
-#include <Adafruit_INA219.h>
+#include "temperature_meter.h"
 #include <Arduino.h>
 #include <Wire.h>
 #include <math.h>
@@ -85,43 +85,12 @@
 #define REED_SWITCH_STATE_ROTATE_BIN_COUNTER 4
 #define REED_SWITCH_STATE_SET_LOGIC_SWITCH 5
 
-#define VOLT_METER_STATE_RESET 0
-#define VOLT_METER_STATE_START_TIMER 1
-#define VOLT_METER_STATE_STOP_TIMER 2
-#define VOLT_METER_STATE_READ_VOLTAGE 3
-#define VOLT_METER_STATE_CONVERT_TO_TEMPERATURE 4
-
 #define DISPLAY_STATE_RESET 0
 #define DISPLAY_STATE_TIMER_RUNNING 1
 #define DISPLAY_STATE_TIMER_STOPPED 2
 #define DISPLAY_STATE_HOLD_TIMER_ON 3
 #define DISPLAY_STATE_TEMPERATURE 4
 #define DISPLAY_STATE_DO_NOTHING 5
-
-// Thermistor calculation values
-// Original idea and code from Jimmy Roasts, https://github.com/JimmyRoasts/LaMarzoccoTempSensor
-
-// resistance at 25 degrees C
-#define THERMISTORNOMINAL_V1 50000 // version 1
-#define THERMISTORNOMINAL_V2 49120 // version 2 updated calculation
-// temp. for nominal resistance (almost always 25 C)
-#define TEMPERATURENOMINAL 25
-// how many samples to take and average, more takes longer
-// but is more 'smooth'
-#define NUMSAMPLES 100
-// The beta coefficient of the thermistor (usually 3000-4000)
-#define BCOEFFICIENT_V1 4400 // version 1
-#define BCOEFFICIENT_V2 3977 // version 2, updated calculation
-// the value of the 'other' resistor
-#define SERIESRESISTOR_V1 6960
-#define SERIESRESISTOR_V2 6190 // version 2, measured on board
-// scaling value to convert voltage
-#define VOLTAGESCALE 12.1
-// reference voltage
-//#define VOLTAGEREF 4.585
-#define VOLTAGEREF 4.16
-
-#define LMREF 5.07 // measured from LMBoard --- GND Board
 
 // Top Level Variables:
 int DEBUG = 1; // Set to 1 to enable serial monitor debugging info
@@ -135,12 +104,6 @@ unsigned long t_0_Reed_Switch = 0;                        // The time that we la
 unsigned long bounce_delay_Reed_Switch = 5;               // The delay to filter bouncing
 unsigned int  bin_counter = 0;                            // binary counter for reed switch
 int           virtual_Reed_Switch = VIRT_REED_SWITCH_OFF; // virtual switch
-
-// SM "Volt Meter" variables
-int           state_Volt_Meter = 0;
-unsigned long t_Volt_Meter = 0;
-unsigned long t_0_Volt_Meter = 0;
-unsigned long delay_Between_2_Measures = 300;
 
 // SM Display variables
 int           state_Display = 0;
@@ -173,43 +136,17 @@ int           beep_number_Status_Led = 2;
 char TimeCounterStr[] = "00:00"; /** String to store time counter value, format: MM:SS */
 char SecondsCounterStr[] = "00"; /** String to store time counter value, format: SS */
 
-// Current and voltage sensor class
-Adafruit_INA219 ina219_monitor;
-#define INA219_VCC_PIN 3
-#define INA219_GND_PIN 2
-
-// INA219 sensor variables
-float bus_Voltage_V;             /** Measured bus voltage in V*/
-float bus_Voltage_mV;            /** Measured bus voltage in mV*/
-char  volt_String[] = "99999.9"; /** String to store measured voltage value in mV */
-
-// Calculated temperature
-float calc_Temperature_V1 = 0.0;
-char  temperature_String_V1[] = "  999.9";
-float steinhart = 0.0;
-float calc_Temperature_V2 = 0.0;
-char  temperature_String_V2[] = "999.9";
-char  temperature_String_V2_Led_Matrix[] = "999.9";
-float thermistor_Res = 0.00; // Thermistor calculated resistance
-
 /* Function declarations */
 
 void StateMachine_counter1(void);
 void StateMachine_Reed_Switch(void);
 void StateMachine_Status_Led(void);
-void StateMachine_Volt_Meter(void);
 void StateMachine_Display(void);
 
 void update_TimeCounterStr(int tMinutes, int tSeconds);
 
 void Gpio_Init(void);
 void display_Timer_On_All(boolean need_Display_Clear, boolean need_Display_Stopped);
-
-void ina219_Init(void);
-void get_Voltage(void);
-void calculate_Temperature_V2(void);
-
-void Adafruit_Text_Display_Test(void);
 
 void Display_Running_Timer(void);
 void Display_Stopped_Timer(void);
@@ -237,13 +174,12 @@ void setup()
     Ht16k33_Led_Matrix_Init();
 #endif
     // SM inits
+    Display_Clear();
     StateMachine_counter1();
     StateMachine_Reed_Switch();
     StateMachine_Volt_Meter();
     state_Display = DISPLAY_STATE_RESET;
     StateMachine_Display();
-    Display_Clear();
-    // Adafruit_Text_Display_Test();
 }
 
 void loop()
@@ -510,89 +446,6 @@ void display_Timer_On_All(boolean need_Display_Clear, boolean need_Display_Stopp
 #endif
 }
 
-void ina219_Init(void)
-{
-    // pinMode(INA219_GND_PIN, OUTPUT);
-    // pinMode(INA219_VCC_PIN, OUTPUT);
-    // digitalWrite(INA219_GND_PIN, LOW);
-    // digitalWrite(INA219_VCC_PIN, HIGH);
-    delay(100);
-    ina219_monitor.begin();
-}
-
-void get_Voltage(void)
-{
-    // measure voltage and current
-    bus_Voltage_V = (ina219_monitor.getBusVoltage_V());
-    bus_Voltage_mV = bus_Voltage_V * 1000;
-    // convert to text
-    dtostrf(bus_Voltage_mV, 7, 1, volt_String);
-// debug display
-#ifdef SERIAL_DEBUG_ENABLED
-    Serial.print(volt_String);
-    Serial.println(F(" mV"));
-#endif
-}
-
-void calculate_Temperature_V2(void)
-{
-    thermistor_Res = SERIESRESISTOR_V2 * (1 / ((LMREF / bus_Voltage_V) - 1));
-    steinhart = thermistor_Res / THERMISTORNOMINAL_V2;
-    steinhart = log(steinhart);                         // ln(R/Ro)
-    steinhart /= BCOEFFICIENT_V2;                       // 1/B * ln(R/Ro)
-    steinhart += (1.0 / (TEMPERATURENOMINAL + 273.15)); // + (1/To)
-    steinhart = 1.0 / steinhart;                        // Invert
-    calc_Temperature_V2 = (float)steinhart - 273.15;    // convert to C
-    if (calc_Temperature_V2 < -100)
-    {
-        calc_Temperature_V2 = -99.9;
-    }
-    dtostrf(calc_Temperature_V2, 5, 1, temperature_String_V2);
-    dtostrf(calc_Temperature_V2, 5, 1, temperature_String_V2_Led_Matrix);
-// debug display
-#ifdef SERIAL_DEBUG_ENABLED
-    Serial.print(temperature_String_V1);
-    Serial.println(F(" *C"));
-#endif
-}
-
-void StateMachine_Volt_Meter(void)
-{
-
-    switch (state_Volt_Meter)
-    {
-    case VOLT_METER_STATE_RESET:
-        state_Volt_Meter = VOLT_METER_STATE_START_TIMER;
-        break;
-
-    case VOLT_METER_STATE_START_TIMER:
-        t_0_Volt_Meter = millis();
-        state_Volt_Meter = VOLT_METER_STATE_STOP_TIMER;
-        break;
-
-    case VOLT_METER_STATE_STOP_TIMER:
-        t_Volt_Meter = millis();
-        if (t_Volt_Meter - t_0_Volt_Meter > delay_Between_2_Measures)
-        {
-            state_Volt_Meter = VOLT_METER_STATE_READ_VOLTAGE;
-        }
-        break;
-
-    case VOLT_METER_STATE_READ_VOLTAGE:
-        get_Voltage();
-        state_Volt_Meter = VOLT_METER_STATE_CONVERT_TO_TEMPERATURE;
-        break;
-
-    case VOLT_METER_STATE_CONVERT_TO_TEMPERATURE:
-        calculate_Temperature_V2();
-        state_Volt_Meter = VOLT_METER_STATE_START_TIMER;
-        if (state_counter1 == COUNTER_STATE_DISABLED && state_Display != DISPLAY_STATE_HOLD_TIMER_ON)
-        {
-            state_Display = DISPLAY_STATE_TEMPERATURE;
-        }
-        break;
-    }
-}
 
 void StateMachine_Display(void)
 {

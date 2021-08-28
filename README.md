@@ -24,8 +24,17 @@
 ## Arduino Pro Mini / Nano pinout connections
 
 ### I2C bus
-- SCK - pin A5
-- SDA - pin A4
+- SCK -> pin A5
+- SDA -> pin A4
+
+### Reed switch (for ensing the operation of water pump)
+- D3
+- GND
+
+### MAX7219 LED matrix controller
+- DataIn -> pin D12
+- CLK    -> pin D11
+- CS     -> pin D10
 
 ## Toolchain
 - VSCode

@@ -1,4 +1,4 @@
-# Arduino Brew Timer and Temperature Display for LaMarzocco Linea Mini espresso machine
+# Arduino Brew/Shot Timer and Temperature Display for LaMarzocco Linea Mini espresso machine
 
 ## Board
 - Arduino Pro Mini / Nano
@@ -6,10 +6,10 @@
 
 ## Extension modules and peripherials used:
 - SSD1306 OLED display, I2C - optional, please see source code for feature switch (SSD1306_ENABLED)
-- MAX7219 LED matrix display, I2C - optional, please see source code for feature switch (MAX7219_ENABLED)
-- 5x7 dot matrix displaying 3x5 digits (controlled by MAX7219)
+- MAX7219 LED matrix display - optional, please see source code for feature switch (MAX7219_ENABLED)
+- 5x7 dot matrix displaying 3x5 digits (controlled by MAX7219) - for shot timer only
 - Holtek HT16K33 LED matrix display, I2C - optional, please see source code for feature switch (HT16K33_ENABLED)
-- reed switch, sensing magnet valve sc
+- reed switch, sensing the operation of 3-way solenoid valve
 - INA219 voltage and current sensor, I2C
 - Note:
   - ILI9340 TFT display NOT supported, not enough free pins on an Arduino ProMicro for that
@@ -27,7 +27,7 @@
 - SCK -> pin A5
 - SDA -> pin A4
 
-### Reed switch (for ensing the operation of water pump)
+### Reed switch (for ensing the operation of solenoid valve)
 - D3
 - GND
 

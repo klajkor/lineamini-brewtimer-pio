@@ -37,17 +37,19 @@ void Display_Timer_On_All(boolean need_Display_Clear, boolean need_Display_Stopp
 
 void StateMachine_Display(void)
 {
+    unsigned long display_hold_timer;
 
     switch (state_Display)
     {
     case DISPLAY_STATE_RESET:
         Display_Stopped_Timer();
-        state_Display = DISPLAY_STATE_DO_NOTHING;
+        t_0_Display = millis();
+        state_Display = DISPLAY_STATE_HOLD_TIMER_ON;
         break;
 
     case DISPLAY_STATE_TIMER_RUNNING:
         Display_Running_Timer();
-        Display_Temperature();
+        // Display_Temperature();
         state_Display = DISPLAY_STATE_DO_NOTHING;
         break;
 
@@ -59,7 +61,8 @@ void StateMachine_Display(void)
 
     case DISPLAY_STATE_HOLD_TIMER_ON:
         t_Display = millis();
-        if (t_Display - t_0_Display > delay_For_Stopped_Timer)
+        display_hold_timer = t_Display - t_0_Display;
+        if (display_hold_timer > delay_For_Stopped_Timer && ((display_hold_timer % 200) == 0))
         {
             state_Display = DISPLAY_STATE_TEMPERATURE;
         }
@@ -67,7 +70,7 @@ void StateMachine_Display(void)
 
     case DISPLAY_STATE_TEMPERATURE:
         Display_Temperature();
-        state_Display = DISPLAY_STATE_DO_NOTHING;
+        state_Display = DISPLAY_STATE_HOLD_TIMER_ON;
         break;
 
     case DISPLAY_STATE_DO_NOTHING:
@@ -91,7 +94,7 @@ void Display_Temperature(void)
     display_Temperature_On_Ssd1306(temperature_str_V2);
 #endif
 #ifdef HT16K33_ENABLED
-    // display_Temperature_On_Ht16k33(temperature_str_V2_Led_Matrix);
+    display_Temperature_On_Ht16k33(Led_temperature_str_V2);
 #endif
 }
 

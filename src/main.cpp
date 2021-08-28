@@ -164,6 +164,10 @@ void StateMachine_counter1(void)
         elapsed_counter1 = millis() - start_counter1;
         iSecCounter1 = int((elapsed_counter1 / 1000) % 60);
         iMinCounter1 = int((elapsed_counter1 / 1000) / 60);
+        if (int((elapsed_counter1 / 100) % 10) > 6)
+        {
+            state_Display = DISPLAY_STATE_TEMPERATURE;
+        }
         if (iSecCounter1 != prev_iSecCounter1)
         {
 // debug display

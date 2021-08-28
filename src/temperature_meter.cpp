@@ -9,7 +9,7 @@ static Adafruit_INA219 ina219_monitor;
 static int           state_Volt_Meter = VOLT_METER_STATE_RESET;
 static unsigned long t_Volt_Meter = 0;
 static unsigned long t_0_Volt_Meter = 0;
-static unsigned long delay_Between_2_Measures = 250;
+static unsigned long delay_Between_2_Measures = 500;
 
 // Calculated temperature
 // static float calc_Temperature_V1 = 0.0;
@@ -19,8 +19,8 @@ static float calc_Temperature_V2 = 0.0;
 static float thermistor_Res = 0.00; // Thermistor calculated resistance
 
 // Global temperature strings
-char *temperature_str_V2 = "999.9";
-char *temperature_str_V2_Led_Matrix = "99.9";
+char temperature_str_V2[6] = "999.9";
+char Led_temperature_str_V2[5] = "99.9";
 
 void ina219_Init(void)
 {
@@ -36,6 +36,8 @@ float get_Voltage(void)
 
     // measure voltage
     bus_Voltage_V = ina219_monitor.getBusVoltage_V();
+    // Only for testing:
+    bus_Voltage_V = (float)(iSecCounter1 / 10.0);
     bus_Voltage_mV = (int)(bus_Voltage_V * 1000);
     // convert to text
     dtostrf(bus_Voltage_mV, 5, 0, volt_String);
@@ -73,10 +75,6 @@ void StateMachine_Volt_Meter(void)
 
     case VOLT_METER_STATE_READ_VOLTAGE:
         measured_voltage = get_Voltage();
-        state_Volt_Meter = VOLT_METER_STATE_CONVERT_TO_TEMPERATURE;
-        break;
-
-    case VOLT_METER_STATE_CONVERT_TO_TEMPERATURE:
         calculate_Temperature_V2(measured_voltage);
         state_Volt_Meter = VOLT_METER_STATE_START_TIMER;
         break;
@@ -85,16 +83,16 @@ void StateMachine_Volt_Meter(void)
 
 void calculate_Temperature_V2(float thermistor_voltage)
 {
-    thermistor_Res = SERIESRESISTOR_V2 * (1 / ((LMREF / thermistor_voltage) - 1));
+    thermistor_Res = SERIESRESISTOR_V2 * (1 / ((LMREF / thermistor_voltage) - 1.0));
     steinhart = thermistor_Res / THERMISTORNOMINAL_V2;
     steinhart = log(steinhart);                         // ln(R/Ro)
     steinhart /= BCOEFFICIENT_V2;                       // 1/B * ln(R/Ro)
     steinhart += (1.0 / (TEMPERATURENOMINAL + 273.15)); // + (1/To)
     steinhart = 1.0 / steinhart;                        // Invert
     calc_Temperature_V2 = (float)steinhart - 273.15;    // convert to C
-    if (calc_Temperature_V2 <= -100)
+    if (calc_Temperature_V2 <= -10)
     {
-        calc_Temperature_V2 = -99.9;
+        calc_Temperature_V2 = -9.9;
     }
     if (calc_Temperature_V2 > 199.9)
     {
@@ -103,11 +101,11 @@ void calculate_Temperature_V2(float thermistor_voltage)
     dtostrf(calc_Temperature_V2, 5, 1, temperature_str_V2);
     if (calc_Temperature_V2 >= 100.0)
     {
-        dtostrf(calc_Temperature_V2, 4, 0, temperature_str_V2_Led_Matrix);
+        dtostrf(calc_Temperature_V2, 4, 0, Led_temperature_str_V2);
     }
     else
     {
-        dtostrf(calc_Temperature_V2, 4, 1, temperature_str_V2_Led_Matrix);
+        dtostrf(calc_Temperature_V2, 4, 1, Led_temperature_str_V2);
     }
 // debug display
 #ifdef SERIAL_DEBUG_ENABLED

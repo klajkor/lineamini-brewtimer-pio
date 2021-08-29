@@ -10,7 +10,7 @@
 //#define MAX7219_ENABLED 1
 
 // uncomment the line below if you would like to use HT16K33 LED matrix
-#define HT16K33_ENABLED 1
+//#define HT16K33_ENABLED 1
 
 // uncomment the line below if you would like to use SSD1306 OLED display
 #define SSD1306_ENABLED 1

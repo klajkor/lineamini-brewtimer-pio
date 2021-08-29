@@ -4,6 +4,7 @@
 
 // Current and voltage sensor class
 static Adafruit_INA219 ina219_monitor;
+static uint8_t         in219_init_success;
 
 // State Machine "Volt Meter" variables
 static int           state_Volt_Meter = VOLT_METER_STATE_RESET;
@@ -26,6 +27,15 @@ void ina219_Init(void)
 {
     delay(10);
     ina219_monitor.begin();
+    delay(100);
+    if (ina219_monitor.success())
+    {
+        in219_init_success = 1;
+    }
+    else
+    {
+        in219_init_success = 0;
+    }
 }
 
 float get_Voltage(void)
@@ -34,10 +44,16 @@ float get_Voltage(void)
     int   bus_Voltage_mV;
     char  volt_String[] = "99999"; /** String to store measured voltage value in mV */
 
-    // measure voltage
-    bus_Voltage_V = ina219_monitor.getBusVoltage_V();
-    // Only for testing:
-    bus_Voltage_V = (float)(iSecCounter1 / 10.0);
+    if (in219_init_success)
+    {
+        // measure voltage
+        bus_Voltage_V = ina219_monitor.getBusVoltage_V();
+    }
+    else
+    {
+        // Only for testing, if ina219 init failed:
+        bus_Voltage_V = (float)((45 - ((millis() / 1000) % 30)) / 10.0);
+    }
     bus_Voltage_mV = (int)(bus_Voltage_V * 1000);
     // convert to text
     dtostrf(bus_Voltage_mV, 5, 0, volt_String);

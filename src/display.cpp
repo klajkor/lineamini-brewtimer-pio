@@ -91,10 +91,10 @@ void Display_Stopped_Timer(void)
 void Display_Temperature(void)
 {
 #ifdef SSD1306_ENABLED
-    display_Temperature_On_Ssd1306(temperature_str_V2);
+    display_Temperature_On_Ssd1306(TEMPERATURE_STR_V2);
 #endif
 #ifdef HT16K33_ENABLED
-    display_Temperature_On_Ht16k33(Led_temperature_str_V2);
+    display_Temperature_On_Ht16k33(TEMPERATURE_STR_LED_V2);
 #endif
 }
 

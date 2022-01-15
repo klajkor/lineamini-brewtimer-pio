@@ -7,10 +7,10 @@ static Adafruit_INA219 ina219_monitor;
 static uint8_t         in219_init_success;
 
 // State Machine "Volt Meter" variables
-static int           state_Volt_Meter = VOLT_METER_STATE_RESET;
-static unsigned long t_Volt_Meter = 0;
-static unsigned long t_0_Volt_Meter = 0;
-static unsigned long delay_Between_2_Measures = 500;
+static int           state_volt_meter = VOLT_METER_STATE_RESET;
+static unsigned long t_volt_meter = 0;
+static unsigned long t_0_volt_meter = 0;
+static unsigned long delay_between_2_measures = 500;
 
 // Calculated temperature
 // static float calc_Temperature_V1 = 0.0;
@@ -20,10 +20,10 @@ static float calc_Temperature_V2 = 0.0;
 static float thermistor_Res = 0.00; // Thermistor calculated resistance
 
 // Global temperature strings
-char temperature_str_V2[6] = "999.9";
-char Led_temperature_str_V2[5] = "99.9";
+char TEMPERATURE_STR_V2[6] = "999.9";
+char TEMPERATURE_STR_LED_V2[5] = "99.9";
 
-void ina219_Init(void)
+void ina219_init(void)
 {
     delay(10);
     ina219_monitor.begin();
@@ -38,7 +38,7 @@ void ina219_Init(void)
     }
 }
 
-float get_Voltage(void)
+float get_thermistor_voltage(void)
 {
     float bus_Voltage_V;
     int   bus_Voltage_mV;
@@ -65,34 +65,34 @@ float get_Voltage(void)
     return bus_Voltage_V;
 }
 
-void StateMachine_Volt_Meter(void)
+void state_machine_volt_meter(void)
 {
     float measured_voltage;
 
-    switch (state_Volt_Meter)
+    switch (state_volt_meter)
     {
     case VOLT_METER_STATE_RESET:
-        state_Volt_Meter = VOLT_METER_STATE_START_TIMER;
+        state_volt_meter = VOLT_METER_STATE_START_TIMER;
         measured_voltage = 0.0;
         break;
 
     case VOLT_METER_STATE_START_TIMER:
-        t_0_Volt_Meter = millis();
-        state_Volt_Meter = VOLT_METER_STATE_STOP_TIMER;
+        t_0_volt_meter = millis();
+        state_volt_meter = VOLT_METER_STATE_STOP_TIMER;
         break;
 
     case VOLT_METER_STATE_STOP_TIMER:
-        t_Volt_Meter = millis();
-        if (t_Volt_Meter - t_0_Volt_Meter > delay_Between_2_Measures)
+        t_volt_meter = millis();
+        if (t_volt_meter - t_0_volt_meter > delay_between_2_measures)
         {
-            state_Volt_Meter = VOLT_METER_STATE_READ_VOLTAGE;
+            state_volt_meter = VOLT_METER_STATE_READ_VOLTAGE;
         }
         break;
 
     case VOLT_METER_STATE_READ_VOLTAGE:
-        measured_voltage = get_Voltage();
+        measured_voltage = get_thermistor_voltage();
         calculate_Temperature_V2(measured_voltage);
-        state_Volt_Meter = VOLT_METER_STATE_START_TIMER;
+        state_volt_meter = VOLT_METER_STATE_START_TIMER;
         break;
     }
 }
@@ -114,18 +114,18 @@ void calculate_Temperature_V2(float thermistor_voltage)
     {
         calc_Temperature_V2 = 199.9;
     }
-    dtostrf(calc_Temperature_V2, 5, 1, temperature_str_V2);
+    dtostrf(calc_Temperature_V2, 5, 1, TEMPERATURE_STR_V2);
     if (calc_Temperature_V2 >= 100.0)
     {
-        dtostrf(calc_Temperature_V2, 4, 0, Led_temperature_str_V2);
+        dtostrf(calc_Temperature_V2, 4, 0, TEMPERATURE_STR_LED_V2);
     }
     else
     {
-        dtostrf(calc_Temperature_V2, 4, 1, Led_temperature_str_V2);
+        dtostrf(calc_Temperature_V2, 4, 1, TEMPERATURE_STR_LED_V2);
     }
 // debug display
 #ifdef SERIAL_DEBUG_ENABLED
-    Serial.print(temperature_str_V2);
+    Serial.print(TEMPERATURE_STR_V2);
     Serial.println(F(" *C"));
 #endif
 }

@@ -35,10 +35,10 @@
 #define LMREF ((float)(5.07)) // measured from LMBoard --- GND Board
 
 // Global temperature strings
-extern char temperature_str_V2[6];
-extern char Led_temperature_str_V2[5];
+extern char TEMPERATURE_STR_V2[6];
+extern char TEMPERATURE_STR_LED_V2[5];
 
-void  ina219_Init(void);
-float get_Voltage(void);
-void  StateMachine_Volt_Meter(void);
+void  ina219_init(void);
+float get_thermistor_voltage(void);
+void  state_machine_volt_meter(void);
 void  calculate_Temperature_V2(float thermistor_voltage);

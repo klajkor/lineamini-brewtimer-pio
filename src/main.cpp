@@ -92,13 +92,13 @@ void setup(void)
     Serial.println(F("Debugging is ON"));
 #endif
     Gpio_Init();
-    ina219_Init();
+    ina219_init();
     Display_Init();
     Display_Clear();
     // SM inits
     StateMachine_counter1();
     StateMachine_Reed_Switch();
-    StateMachine_Volt_Meter();
+    state_machine_volt_meter();
     // state_Display = DISPLAY_STATE_RESET;
     StateMachine_Display();
 }
@@ -127,7 +127,7 @@ void loop()
         break;
     }
     StateMachine_counter1();
-    StateMachine_Volt_Meter();
+    state_machine_volt_meter();
     StateMachine_Display();
 }
 
